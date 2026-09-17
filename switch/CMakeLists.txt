@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.25)
 project(melee-nx LANGUAGES C CXX ASM)
 
+# Matches melee-pc's own CMakeLists.txt. Without this, PC_SOURCES/SWITCH_SOURCES
+# fall back to Clang's C++17 default and std::span (used by aurora/rmlui.hpp,
+# game_data_gate.cpp's std::filesystem usage, etc.) fails to resolve.
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 # Require GCC for C (scalar_storage_order). Clang handles C++.
 if(NOT CMAKE_C_COMPILER_ID STREQUAL "GNU")
   message(FATAL_ERROR "melee-nx requires GCC as the C compiler (same as melee-pc upstream). Use SwitchGCC.cmake.")
@@ -45,7 +51,13 @@ target_compile_options(melee_game PRIVATE
   -ffp-contract=off
   -fexec-charset=CP932
   -Wno-scalar-storage-order
-  -fPIC)
+  -fPIC
+  # Force-included into every game translation unit (matches melee-pc's own
+  # CMakeLists.txt): defines DISC_STRUCT/DISC_PTR/DP/DISC_ASSERT_SIZE via
+  # pc/disc.h. Missing this causes exactly the "struct DISC_STRUCT Foo {"
+  # parse errors seen across src/sysdolphin -- these headers never #include
+  # disc.h themselves, they rely on this force-include like upstream does.
+  -include ${MELEE_PC_ROOT}/src/pc/compat.h)
 target_link_libraries(melee_game PUBLIC
   aurora::core aurora::gx aurora::gd aurora::vi aurora::pad aurora::si aurora::mtx
   aurora::os aurora::dvd aurora::card aurora::thp)

@@ -51,6 +51,7 @@ prepare() {
   apply_patch_once "$sdl"                         "$repo/switch/patches/sdl-switch-external-graphics.patch"
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-surface.patch"
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-dawn-backends.patch"
+  apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-status-compat.patch"
 }
 
 build_dawn() {

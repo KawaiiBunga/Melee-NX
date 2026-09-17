@@ -1,0 +1,19 @@
+--- a/lib/aurora.cpp
++++ b/lib/aurora.cpp
+@@ -393,11 +393,14 @@
+     if (canPresent && g_surface) {
+       ZoneScopedN("Present");
+-      wgpu::ConvertibleStatus status = wgpu::Status::Error;
++      /* Our pinned Dawn revision (chosen for proven Switch/NVK compatibility --
++       * see docs/DEPS.md) predates wgpu::ConvertibleStatus; wgpu::Status is a
++       * plain Success/Error enum there, so compare it explicitly instead. */
++      wgpu::Status status = wgpu::Status::Error;
+       {
+         window::SurfaceLock surfaceLock;
+         if (window::is_presentable()) {
+           status = g_surface.Present();
+         }
+       }
+-      if (status) {
++      if (status == wgpu::Status::Success) {
+         gfx::after_present();
