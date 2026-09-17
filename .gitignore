@@ -1,0 +1,62 @@
+# ── User-supplied game disc (NEVER commit) ────────────────────────────────────
+/iso/
+
+# ── Build trees and outputs ───────────────────────────────────────────────────
+/build/
+/dist/
+
+# ── Vendored upstream / reference checkouts ──────────────────────────────────
+# Large third-party trees (Dawn, SDL3, Aurora, melee-pc). Reconstruct locally.
+/ref/
+
+# ── Hardware run artifacts ────────────────────────────────────────────────────
+/newest_build_artifacts/
+
+# ── Game data / Nintendo-derived content (defense in depth) ──────────────────
+*.iso
+*.gcm
+*.ciso
+*.rvz
+*.dol
+*.szs
+*.arc
+*.thp
+*.gci
+
+# ── Built homebrew binaries ───────────────────────────────────────────────────
+*.nro
+*.nso
+*.elf
+*.nacp
+*.map
+*.pfs0
+*.npdm
+
+# ── Caches / logs / scratch ───────────────────────────────────────────────────
+*.log
+*.db
+*.zip
+*.7z
+scratch_*
+/scratchpad/
+/Logs/
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+
+# ── OS / editor cruft ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*~
+.vscode/
+.idea/
+
+# ── Claude / AI memory (never publish) ───────────────────────────────────────
+/memory/
+.claude/
+AGENTS.md
+CLAUDE.md
+PROGRESS.md
