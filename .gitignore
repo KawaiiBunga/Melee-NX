@@ -56,6 +56,7 @@ desktop.ini
 
 # ── Claude / AI memory (never publish) ───────────────────────────────────────
 /memory/
+/docs/
 .claude/
 /AGENTS.md
 /CLAUDE.md
