@@ -1,0 +1,38 @@
+--- a/src/pc/main.c
++++ b/src/pc/main.c
+@@ -274,8 +274,12 @@
+     fprintf(stderr, "\nMELEE_BACKEND: falling back to auto\n");
+     return BACKEND_AUTO;
+ }
+
+-MELEE_EXPORT int main(int argc, char* argv[]) {
++#if defined(__SWITCH__)
++MELEE_EXPORT int melee_main_impl(int argc, char* argv[]) {
++#else
++MELEE_EXPORT int main(int argc, char* argv[]) {
++#endif
+ #if defined(_WIN32)
+     SetUnhandledExceptionFilter(crash_handler);
+ #endif
+@@ -297,13 +301,18 @@
+         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+             usage(argv[0]);
+         }
+     }
++#if defined(__SWITCH__)
++    static const char* const kMeleeAppId = "melee-nx";
++#else
++    static const char* const kMeleeAppId = "melee-pc";
++#endif
+     AuroraConfig config = {
+         /* appName doubles as the window title; the save/cache dirs stay
+          * pinned so a renamed test window still uses the same memory card. */
+-        .appName = getenv("MELEE_WINDOW_TITLE") ? getenv("MELEE_WINDOW_TITLE") : "melee-pc",
+-        .userPath = SDL_GetPrefPath(NULL, "melee-pc"),
+-        .cachePath = SDL_GetPrefPath(NULL, "melee-pc"),
++        .appName = getenv("MELEE_WINDOW_TITLE") ? getenv("MELEE_WINDOW_TITLE") : kMeleeAppId,
++        .userPath = SDL_GetPrefPath(NULL, kMeleeAppId),
++        .cachePath = SDL_GetPrefPath(NULL, kMeleeAppId),
+         .msaa = 1,
+         .maxTextureAnisotropy = 16,
+         /* MELEE_VSYNC=0 picks Mailbox/Immediate instead of FifoRelaxed; some
