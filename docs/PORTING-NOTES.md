@@ -136,6 +136,28 @@ far lighter than MKW. GPU is not the bottleneck (same as KartPad-NX; endFrame �
 6. **Boot on hardware**: once it links, test disc load, MEM1/ext-pointer behavior under
    real memory pressure, rendering, input.
 
+## Confirmed by an actual build (not just static review)
+
+Docker + the `kartpad-dawn` image were available on the dev machine, so the graphics
+half of the bring-up sequence was actually run, not just planned:
+
+- `builder/build-graphics.sh prepare` — all 7 patches apply cleanly (or are already
+  applied) against freshly cloned/copied `ref/dawn`, `ref/SDL`, `ref/melee-pc`.
+- `builder/build-graphics.sh dawn` — **found and fixed a real build break**: Dawn's
+  vendored `third_party/renderdoc/renderdoc/api/app/renderdoc_app.h` only recognizes
+  Windows/Linux/BSD/Apple for its `RENDERDOC_CC` calling-convention macro and hits
+  `#error "Unknown platform"` for `__SWITCH__`. Because `RENDERDOC_CC` then expands to
+  nothing predictable, every subsequent `typedef` in that header cascades into bogus
+  "typedef redefinition"/"expected ')'" errors that look unrelated to the real cause.
+  Fixed with `dawn-switch-renderdoc.patch` (adds `__SWITCH__` next to `__linux__` etc. —
+  Switch needs no special calling-convention keyword either). **After this fix, Dawn
+  built to completion**: `libwebgpu_dawn.a` (~472 MB) links successfully.
+- `builder/build-graphics.sh sdl` — run next; see git history / session log for result.
+
+This is meaningfully more confidence than the original scaffold had: the Vulkan-only
+Dawn configuration, the GCC/Clang toolchain split, and all Dawn-side Switch patches are
+now proven to compile, not just planned to.
+
 ## Known risks
 
 - `ASSERT_SIZE` / `ASSERT_OFFSET` in `tools/lint_sweep.py` (-m32 checks): these test
