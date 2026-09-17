@@ -1,0 +1,29 @@
+--- a/lib/dawn/BackendBinding.cpp
++++ b/lib/dawn/BackendBinding.cpp
+@@ -6,11 +6,25 @@
+ #include <SDL3/SDL_video.h>
+ #endif
+ 
++#if defined(__SWITCH__)
++#include <switch.h>
++#endif
++
+ namespace aurora::webgpu::utils {
+ std::shared_ptr<wgpu::ChainedStruct> SetupWindowAndGetSurfaceDescriptorCocoa(SDL_Window* window);
+ 
+ std::shared_ptr<wgpu::ChainedStruct> SetupWindowAndGetSurfaceDescriptor(SDL_Window* window) {
+-#if defined(SDL_PLATFORM_MACOS) || defined(SDL_PLATFORM_IOS) || defined(SDL_PLATFORM_TVOS)
++#if defined(__SWITCH__)
++  // The libnx SDL video driver is EGL/GLES on nwindowGetDefault() and exposes no
++  // native-window property; Dawn's Vulkan backend takes the nwindow directly via
++  // VK_NN_vi_surface (vkCreateViSurfaceNN). Aurora uses Vulkan, not GL, so the
++  // default nwindow is free for the swapchain.
++  (void)window;
++  std::shared_ptr<wgpu::SurfaceSourceSwitchNativeWindow> desc =
++      std::make_shared<wgpu::SurfaceSourceSwitchNativeWindow>();
++  desc->window = nwindowGetDefault();
++  return std::move(desc);
++#elif defined(SDL_PLATFORM_MACOS) || defined(SDL_PLATFORM_IOS) || defined(SDL_PLATFORM_TVOS)
+   return SetupWindowAndGetSurfaceDescriptorCocoa(window);
+ #else
+   const auto props = SDL_GetWindowProperties(window);

@@ -1,0 +1,96 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -3316,6 +3316,7 @@
+   )
+ 
+ elseif(SWITCH)
++  option(SDL_SWITCH_EXTERNAL_GRAPHICS "Switch window is rendered externally (Dawn/NVK); omit EGL/GLES" OFF)
+   # Nintendo Switch homebrew (libnx / devkitPro). Private fork backend.
+   # The devkitA64 toolchain does not predefine __SWITCH__, so add it here.
+   sdl_compile_definitions(PUBLIC "__SWITCH__")
+@@ -3366,8 +3367,10 @@
+ 
+   if(SDL_VIDEO)
+     set(SDL_VIDEO_DRIVER_SWITCH 1)
+-    set(SDL_VIDEO_OPENGL_ES2 1)
+-    set(SDL_VIDEO_RENDER_OGL_ES2 1)
++    if(NOT SDL_SWITCH_EXTERNAL_GRAPHICS)
++      set(SDL_VIDEO_OPENGL_ES2 1)
++      set(SDL_VIDEO_RENDER_OGL_ES2 1)
++    endif()
+     sdl_glob_sources(
+       "${SDL3_SOURCE_DIR}/src/video/switch/*.c"
+       "${SDL3_SOURCE_DIR}/src/video/switch/*.h"
+--- a/src/video/switch/SDL_switchvideo.h
++++ b/src/video/switch/SDL_switchvideo.h
+@@ -24,18 +24,22 @@
+ #include "SDL_internal.h"
+ #include "../SDL_sysvideo.h"
+ 
++#ifdef SDL_VIDEO_OPENGL_ES2
+ #include <EGL/egl.h>
+ #include <EGL/eglext.h>
++#endif
+ 
+ // Per-device state: a single EGL context bound to the Switch default NWindow.
+ struct SDL_VideoData
+ {
+     bool egl_initialized;
++#ifdef SDL_VIDEO_OPENGL_ES2
+     EGLDisplay display;
+     EGLContext context;
+     EGLSurface surface;
+     EGLConfig config;
+     int swap_interval;
++#endif
+ };
+ 
+ struct SDL_WindowData
+--- a/src/video/switch/SDL_switchvideo.c
++++ b/src/video/switch/SDL_switchvideo.c
+@@ -40,6 +40,8 @@
+ // EGL / OpenGL ES backed by libnx's default NWindow and switch-mesa.
+ // ---------------------------------------------------------------------------
+ 
++// KartPad-NX: external-graphics builds let Dawn own the NWindow.
++#ifdef SDL_VIDEO_OPENGL_ES2
+ static bool SWITCH_GL_LoadLibrary(SDL_VideoDevice *_this, const char *path)
+ {
+     // EGL/GLESv2 are statically linked from the portlibs; nothing to dlopen.
+@@ -198,6 +200,8 @@
+     return true;
+ }
+ 
++#endif // SDL_VIDEO_OPENGL_ES2
++
+ // ---------------------------------------------------------------------------
+ // Display / window management
+ // ---------------------------------------------------------------------------
+@@ -285,9 +289,11 @@
+         SDL_free(device);
+         return NULL;
+     }
++#ifdef SDL_VIDEO_OPENGL_ES2
+     data->display = EGL_NO_DISPLAY;
+     data->context = EGL_NO_CONTEXT;
+     data->surface = EGL_NO_SURFACE;
++#endif
+     device->internal = data;
+ 
+     device->VideoInit = SWITCH_VideoInit;
+@@ -296,6 +302,7 @@
+     device->DestroyWindow = SWITCH_DestroyWindow;
+     device->PumpEvents = SWITCH_PumpEvents;
+ 
++#ifdef SDL_VIDEO_OPENGL_ES2
+     device->GL_LoadLibrary = SWITCH_GL_LoadLibrary;
+     device->GL_GetProcAddress = SWITCH_GL_GetProcAddress;
+     device->GL_UnloadLibrary = SWITCH_GL_UnloadLibrary;
+@@ -305,6 +312,7 @@
+     device->GL_GetSwapInterval = SWITCH_GL_GetSwapInterval;
+     device->GL_SwapWindow = SWITCH_GL_SwapWindow;
+     device->GL_DestroyContext = SWITCH_GL_DestroyContext;
++#endif
+ 
+     device->device_caps = VIDEO_DEVICE_CAPS_FULLSCREEN_ONLY;
+ 

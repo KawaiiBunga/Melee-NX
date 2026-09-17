@@ -1,0 +1,155 @@
+diff --git a/absl/base/config.h b/absl/base/config.h
+index e3e2c96..2fc9e26 100644
+--- a/absl/base/config.h
++++ b/absl/base/config.h
+@@ -345,7 +345,10 @@ static_assert(ABSL_INTERNAL_INLINE_NAMESPACE_STR[0] != 'h' ||
+     defined(__myriad2__) || defined(__HAIKU__) || defined(__OpenBSD__) || \
+     defined(__NetBSD__) || defined(__QNX__) || defined(__VXWORKS__) ||    \
+     defined(__hexagon__) || defined(__XTENSA__) ||                        \
+-    defined(_WASI_EMULATED_MMAN)
++    defined(_WASI_EMULATED_MMAN) || defined(__SWITCH__)
++// __SWITCH__: devkitA64/newlib ships no <sys/mman.h>, but the Switch port
++// provides an anonymous mmap/munmap shim (page-aligned malloc backing). Enabling
++// this un-empties low_level_alloc.cc so CreateThreadIdentity / PerThreadSem link.
+ #define ABSL_HAVE_MMAP 1
+ #endif
+ 
+diff --git a/absl/base/internal/direct_mmap.h b/absl/base/internal/direct_mmap.h
+index 855f51e..c6b9eb9 100644
+--- a/absl/base/internal/direct_mmap.h
++++ b/absl/base/internal/direct_mmap.h
+@@ -22,7 +22,33 @@
+ 
+ #ifdef ABSL_HAVE_MMAP
+ 
++#if defined(__SWITCH__)
++// devkitA64/newlib ships no <sys/mman.h>. Declare the minimal anonymous-mapping
++// surface LowLevelAlloc needs; it is backed by a page-aligned malloc shim in the
++// Switch platform libc stubs. The kAsyncSignalSafe/DirectMmap path is disabled on
++// Switch (ABSL_LOW_LEVEL_ALLOC_ASYNC_SIGNAL_SAFE_MISSING), so the DirectMmap/
++// DirectMunmap wrappers below are never called at runtime — they only compile.
++#include <cstddef>
++#ifndef PROT_READ
++#define PROT_NONE 0x0
++#define PROT_READ 0x1
++#define PROT_WRITE 0x2
++#endif
++#ifndef MAP_PRIVATE
++#define MAP_SHARED 0x01
++#define MAP_PRIVATE 0x02
++#define MAP_ANONYMOUS 0x20
++#define MAP_ANON MAP_ANONYMOUS
++#endif
++#ifndef MAP_FAILED
++#define MAP_FAILED ((void*)-1)
++#endif
++extern "C" void* mmap(void* addr, size_t length, int prot, int flags, int fd,
++                      long offset);
++extern "C" int munmap(void* addr, size_t length);
++#else
+ #include <sys/mman.h>
++#endif  // __SWITCH__
+ 
+ #ifdef __linux__
+ 
+diff --git a/absl/base/internal/low_level_alloc.cc b/absl/base/internal/low_level_alloc.cc
+index 3887a92..bc2bee6 100644
+--- a/absl/base/internal/low_level_alloc.cc
++++ b/absl/base/internal/low_level_alloc.cc
+@@ -39,7 +39,9 @@
+ #ifndef _WIN32
+ #include <pthread.h>
+ #include <signal.h>
++#if !defined(__SWITCH__)
+ #include <sys/mman.h>
++#endif  // __SWITCH__ has no <sys/mman.h>; direct_mmap.h declares the shim surface.
+ #include <unistd.h>
+ #else
+ #include <windows.h>
+@@ -366,6 +368,11 @@ size_t GetPageSize() {
+   return std::max(system_info.dwPageSize, system_info.dwAllocationGranularity);
+ #elif defined(__wasm__) || defined(__asmjs__) || defined(__hexagon__)
+   return static_cast<size_t>(getpagesize());
++#elif defined(__SWITCH__)
++  // Horizon's virtual-memory page size is 4 KiB; hardcode it so we don't depend
++  // on sysconf/getpagesize (stubbed/unreliable on newlib) and stay consistent
++  // with the mmap shim's alignment.
++  return static_cast<size_t>(0x1000);
+ #else
+   return static_cast<size_t>(sysconf(_SC_PAGESIZE));
+ #endif
+diff --git a/absl/base/internal/low_level_alloc.h b/absl/base/internal/low_level_alloc.h
+index 23218dd..79968a4 100644
+--- a/absl/base/internal/low_level_alloc.h
++++ b/absl/base/internal/low_level_alloc.h
+@@ -47,7 +47,10 @@
+ #ifdef ABSL_LOW_LEVEL_ALLOC_ASYNC_SIGNAL_SAFE_MISSING
+ #error ABSL_LOW_LEVEL_ALLOC_ASYNC_SIGNAL_SAFE_MISSING cannot be directly set
+ #elif defined(_WIN32) || defined(__asmjs__) || defined(__wasm__) || \
+-    defined(__hexagon__)
++    defined(__hexagon__) || defined(__SWITCH__)
++// __SWITCH__: the kAsyncSignalSafe path uses DirectMmap (raw SYS_mmap syscall),
++// which Horizon has no equivalent for. Marking it missing routes both arenas
++// through the plain mmap/munmap shim instead.
+ #define ABSL_LOW_LEVEL_ALLOC_ASYNC_SIGNAL_SAFE_MISSING 1
+ #endif
+ 
+diff --git a/absl/base/internal/sysinfo.cc b/absl/base/internal/sysinfo.cc
+index 1f380bc..e6226e5 100644
+--- a/absl/base/internal/sysinfo.cc
++++ b/absl/base/internal/sysinfo.cc
+@@ -471,6 +471,14 @@ pid_t GetTID() {
+   return static_cast<pid_t>(zx_thread_self());
+ }
+ 
++#elif defined(__SWITCH__)
++
++// devkitA64/newlib: `pthread_t` is a pointer (`__pthread_t*`), so it cannot be
++// static_cast to an integer. Reinterpret it as an address for a stable per-thread id.
++pid_t GetTID() {
++  return static_cast<pid_t>(reinterpret_cast<uintptr_t>(pthread_self()));
++}
++
+ #else
+ 
+ // Fallback implementation of `GetTID` using `pthread_self`.
+diff --git a/absl/debugging/internal/elf_mem_image.h b/absl/debugging/internal/elf_mem_image.h
+index 4d31a47..5c3c7a6 100644
+--- a/absl/debugging/internal/elf_mem_image.h
++++ b/absl/debugging/internal/elf_mem_image.h
+@@ -36,7 +36,9 @@
+ #if defined(__ELF__) && !defined(__OpenBSD__) && !defined(__QNX__) &&    \
+     !defined(__asmjs__) && !defined(__wasm__) && !defined(__HAIKU__) &&  \
+     !defined(__sun) && !defined(__VXWORKS__) && !defined(__hexagon__) && \
+-    !defined(__XTENSA__)
++    !defined(__XTENSA__) && !defined(__SWITCH__)
++// __SWITCH__: devkitA64/newlib is ELF but ships no <link.h>; ELF-image
++// symbolization is a diagnostics-only feature not needed on Horizon.
+ #define ABSL_HAVE_ELF_MEM_IMAGE 1
+ #endif
+ 
+diff --git a/absl/time/internal/cctz/src/time_zone_libc.cc b/absl/time/internal/cctz/src/time_zone_libc.cc
+index 362da1a..b6c2d2b 100644
+--- a/absl/time/internal/cctz/src/time_zone_libc.cc
++++ b/absl/time/internal/cctz/src/time_zone_libc.cc
+@@ -83,6 +83,12 @@ auto tm_zone(const std::tm& tm) -> decltype(tzname[0]) {
+ }
+ #else
+ // Adapt to different spellings of the struct std::tm extension fields.
++#if defined(__SWITCH__)
++// devkitA64/newlib `struct tm` has neither tm_gmtoff nor tm_zone. Horizon has no
++// meaningful local-timezone offset, so report UTC (0) / empty zone.
++inline long tm_gmtoff(const std::tm&) { return 0; }
++inline const char* tm_zone(const std::tm&) { return ""; }
++#else
+ #if defined(tm_gmtoff)
+ auto tm_gmtoff(const std::tm& tm) -> decltype(tm.tm_gmtoff) {
+   return tm.tm_gmtoff;
+@@ -117,6 +123,7 @@ auto tm_zone(const T& tm) -> decltype(tm.__tm_zone) {
+   return tm.__tm_zone;
+ }
+ #endif  // tm_zone
++#endif  // __SWITCH__
+ #endif
+ using tm_gmtoff_t = decltype(tm_gmtoff(std::tm{}));
+ 

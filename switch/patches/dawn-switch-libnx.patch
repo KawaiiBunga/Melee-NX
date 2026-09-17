@@ -1,0 +1,163 @@
+diff --git a/src/dawn/common/DynamicLib.cpp b/src/dawn/common/DynamicLib.cpp
+index d155e490d..ccd6de46d 100644
+--- a/src/dawn/common/DynamicLib.cpp
++++ b/src/dawn/common/DynamicLib.cpp
+@@ -38,7 +38,19 @@
+ #include "src/dawn/common/WindowsUtils.h"
+ #endif
+ #elif DAWN_PLATFORM_IS(POSIX)
++#if DAWN_PLATFORM_IS(SWITCH)
++// Horizon/libnx has no dynamic loader. Vulkan (NVK) is linked statically and the
++// Switch code path never calls DynamicLib, but this TU must still compile — supply
++// always-failing dl* stubs instead of <dlfcn.h>.
++#define RTLD_NOW 0
++#define RTLD_NOLOAD 0
++inline void* dlopen(const char*, int) { return nullptr; }
++inline int dlclose(void*) { return 0; }
++inline void* dlsym(void*, const char*) { return nullptr; }
++inline const char* dlerror() { return "no dynamic loader on Horizon"; }
++#else
+ #include <dlfcn.h>
++#endif
+ #else
+ #error "Unsupported platform for DynamicLib"
+ #endif
+diff --git a/src/dawn/common/SystemUtils.cpp b/src/dawn/common/SystemUtils.cpp
+index 8f90fd328..832c2c07d 100644
+--- a/src/dawn/common/SystemUtils.cpp
++++ b/src/dawn/common/SystemUtils.cpp
+@@ -149,8 +149,10 @@ std::optional<std::string> GetExecutablePath() {
+     // UNIMPLEMENTED
+     return {};
+ }
+-#elif DAWN_PLATFORM_IS(EMSCRIPTEN)
++#elif DAWN_PLATFORM_IS(EMSCRIPTEN) || DAWN_PLATFORM_IS(SWITCH)
+ std::optional<std::string> GetExecutablePath() {
++    // Horizon: no process exec path; only used for validation-layer discovery we
++    // don't ship.
+     return {};
+ }
+ #else
+@@ -203,7 +205,7 @@ std::optional<std::string> GetModulePath() {
+ std::optional<std::string> GetModulePath() {
+     return {};
+ }
+-#elif DAWN_PLATFORM_IS(EMSCRIPTEN)
++#elif DAWN_PLATFORM_IS(EMSCRIPTEN) || DAWN_PLATFORM_IS(SWITCH)
+ std::optional<std::string> GetModulePath() {
+     return {};
+ }
+diff --git a/src/dawn/native/vulkan/BackendVk.cpp b/src/dawn/native/vulkan/BackendVk.cpp
+index a93ea4f99..045146950 100644
+--- a/src/dawn/native/vulkan/BackendVk.cpp
++++ b/src/dawn/native/vulkan/BackendVk.cpp
+@@ -69,6 +69,11 @@ constexpr char kVulkanLibName[] = "vulkan-1.dll";
+ constexpr char kVulkanLibName[] = "libvulkan.dylib";
+ #elif DAWN_PLATFORM_IS(FUCHSIA)
+ constexpr char kVulkanLibName[] = "libvulkan.so";
++#elif DAWN_PLATFORM_IS(SWITCH)
++// Unused on Switch: Vulkan (NVK) is linked statically and vkGetInstanceProcAddr
++// is resolved at link time (see VulkanInstance::Initialize below). Kept so the
++// unconditional references to kVulkanLibName still compile.
++constexpr char kVulkanLibName[] = "";
+ #else
+ #error "Unimplemented Vulkan backend platform"
+ #endif
+@@ -370,7 +375,12 @@ MaybeError VulkanInstance::Initialize(const InstanceBase* instance, ICD icd) {
+ 
+     switch (icd) {
+         case ICD::None: {
++#if DAWN_PLATFORM_IS(SWITCH)
++            // Vulkan (NVK) is linked statically on Horizon; nothing to dlopen.
++            (void)LoadVulkan;
++#else
+             DAWN_TRY(LoadVulkan(kVulkanLibName));
++#endif
+             // Succesfully loaded driver; break.
+             break;
+         }
+diff --git a/src/dawn/native/vulkan/VulkanFunctions.cpp b/src/dawn/native/vulkan/VulkanFunctions.cpp
+index 60b075dea..c385603ef 100644
+--- a/src/dawn/native/vulkan/VulkanFunctions.cpp
++++ b/src/dawn/native/vulkan/VulkanFunctions.cpp
+@@ -33,6 +33,14 @@
+ #include "src/dawn/common/DynamicLib.h"
+ #include "src/dawn/native/vulkan/VulkanInfo.h"
+ 
++#if DAWN_PLATFORM_IS(SWITCH)
++// Dawn compiles with VK_NO_PROTOTYPES, so vkGetInstanceProcAddr has no declaration.
++// On Horizon it is linked statically from NVK's libvulkan.a; declare it at file
++// scope (a language-linkage spec is illegal inside a function body).
++extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(
++    VkInstance instance, const char* pName);
++#endif
++
+ namespace dawn::native::vulkan {
+ 
+ namespace {
+@@ -89,9 +97,18 @@ F AsVkFn(void(VKAPI_PTR* addr)()) {
+     } while (0)
+ 
+ MaybeError VulkanFunctions::LoadGlobalProcs(const DynamicLib& vulkanLib) {
++#if DAWN_PLATFORM_IS(SWITCH)
++    // No dynamic loader on Horizon: Vulkan (NVK) is linked statically, so the
++    // whole proc table bootstraps from the link-time vkGetInstanceProcAddr symbol.
++    // vkGetInstanceProcAddr is declared at file scope above and provided by NVK's
++    // static libvulkan.a at link time.
++    (void)vulkanLib;
++    GetInstanceProcAddr = &vkGetInstanceProcAddr;
++#else
+     if (!vulkanLib.GetProc(&GetInstanceProcAddr, "vkGetInstanceProcAddr")) {
+         return DAWN_INTERNAL_ERROR("Couldn't get vkGetInstanceProcAddr");
+     }
++#endif
+ 
+     GET_GLOBAL_PROC(CreateInstance);
+     GET_GLOBAL_PROC(EnumerateInstanceExtensionProperties);
+diff --git a/src/utils/platform.h b/src/utils/platform.h
+index 4dd58a487..f753703cc 100644
+--- a/src/utils/platform.h
++++ b/src/utils/platform.h
+@@ -90,6 +90,14 @@
+ #define DAWN_PLATFORM_IS_FUCHSIA 1
+ #define DAWN_PLATFORM_IS_POSIX 1
+ 
++#elif defined(__SWITCH__)
++// Nintendo Switch homebrew (devkitA64/libnx). Horizon exposes a partial POSIX
++// (newlib) environment with no dynamic loader; treat it like Fuchsia — POSIX,
++// no desktop windowing — and link Vulkan (NVK) statically. See
++// switch/patches/dawn-switch-libnx.patch.
++#define DAWN_PLATFORM_IS_SWITCH 1
++#define DAWN_PLATFORM_IS_POSIX 1
++
+ #elif defined(__EMSCRIPTEN__)
+ #define DAWN_PLATFORM_IS_EMSCRIPTEN 1
+ #define DAWN_PLATFORM_IS_POSIX 1
+@@ -238,6 +246,9 @@ static_assert(sizeof(sizeof(char)) == 4, "Expect sizeof(size_t) == 4");
+ #if !defined(DAWN_PLATFORM_IS_FUCHSIA)
+ #define DAWN_PLATFORM_IS_FUCHSIA 0
+ #endif
++#if !defined(DAWN_PLATFORM_IS_SWITCH)
++#define DAWN_PLATFORM_IS_SWITCH 0
++#endif
+ #if !defined(DAWN_PLATFORM_IS_EMSCRIPTEN)
+ #define DAWN_PLATFORM_IS_EMSCRIPTEN 0
+ #endif
+diff --git a/third_party/CMakeLists.txt b/third_party/CMakeLists.txt
+index 5d7228f57..75b99b9ab 100644
+--- a/third_party/CMakeLists.txt
++++ b/third_party/CMakeLists.txt
+@@ -186,7 +186,12 @@ endif()
+ if (NOT TARGET renderdoc-api)
+     add_library(RenderDocApi INTERFACE)
+     target_include_directories(RenderDocApi INTERFACE "renderdoc")
+-    target_compile_definitions(RenderDocApi INTERFACE "DAWN_ENABLE_RENDERDOC")
++    # RenderDoc's app header has no calling-convention branch for Horizon/Switch
++    # (and RenderDoc capture is a desktop-debugging feature). Gate it so
++    # -DDAWN_ENABLE_RENDERDOC=OFF drops it; default ON preserves upstream behavior.
++    if (NOT DEFINED DAWN_ENABLE_RENDERDOC OR DAWN_ENABLE_RENDERDOC)
++        target_compile_definitions(RenderDocApi INTERFACE "DAWN_ENABLE_RENDERDOC")
++    endif()
+ endif()
+ 
+ if (DAWN_ENABLE_DESKTOP_GL OR DAWN_ENABLE_OPENGLES)

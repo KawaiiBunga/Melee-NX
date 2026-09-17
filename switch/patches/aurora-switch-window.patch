@@ -1,0 +1,67 @@
+--- a/lib/window.cpp
++++ b/lib/window.cpp
+@@ -365,7 +365,7 @@
+ 
+ bool create_window(AuroraBackend backend) {
+   SDL_WindowFlags flags = SDL_WINDOW_HIGH_PIXEL_DENSITY;
+-#if TARGET_OS_IOS || TARGET_OS_TV
++#if TARGET_OS_IOS || TARGET_OS_TV || defined(__SWITCH__)
+   flags |= SDL_WINDOW_FULLSCREEN;
+ #else
+   flags |= SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE;
+@@ -377,7 +377,9 @@
+ #ifdef AURORA_ENABLE_GX
+ #ifdef DAWN_ENABLE_BACKEND_VULKAN
+   case BACKEND_VULKAN:
++#ifndef __SWITCH__
+     flags |= SDL_WINDOW_VULKAN;
++#endif
+     break;
+ #endif
+ #ifdef DAWN_ENABLE_BACKEND_METAL
+@@ -412,6 +414,12 @@
+   const Sint32 posY = g_config.hasWindowPosition ? g_config.windowPosY : SDL_WINDOWPOS_CENTERED;
+ 
+   const auto props = SDL_CreateProperties();
++#ifdef __SWITCH__
++  // SDL has no Switch Vulkan hooks. Dawn owns nwindowGetDefault() directly.
++  // Suppress SDL's default GL backend as well as its Vulkan loader path.
++  TRY(SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_EXTERNAL_GRAPHICS_CONTEXT_BOOLEAN, true),
++      "Failed to select external Switch graphics: {}", SDL_GetError());
++#endif
+   TRY(SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, g_config.appName), "Failed to set {}: {}",
+       SDL_PROP_WINDOW_CREATE_TITLE_STRING, SDL_GetError());
+   TRY(SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, posX), "Failed to set {}: {}",
+--- a/lib/webgpu/gpu.cpp
++++ b/lib/webgpu/gpu.cpp
+@@ -124,6 +124,13 @@
+     }
+     return false;
+   };
++#ifdef __SWITCH__
++  // Bring-up follows the FIFO path already demonstrated by the native probe.
++  // Revisit latency/interpolation after Aurora has been measured on hardware.
++  if (supports(wgpu::PresentMode::Fifo)) {
++    return wgpu::PresentMode::Fifo;
++  }
++#endif
+   // Vulkan prefers Mailbox, every other backend Immediate. Under window capture the Vulkan driver
+   // cannot flip and Immediate leaks about a megabyte per present until the device is lost.
+   const bool preferMailbox = g_backendType == wgpu::BackendType::Vulkan;
+--- a/cmake/AuroraDawnProvider.cmake
++++ b/cmake/AuroraDawnProvider.cmake
+@@ -11,7 +11,13 @@
+ # When using a non-vendored Dawn, we don't get DAWN_ENABLE_* from its build.
+ # Infer from the target platform instead.
+ function(_aurora_dawn_set_platform_backends)
+-  if (WIN32)
++  if (CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch")
++    # Match the local Vulkan-only Dawn build; do not advertise a null fallback.
++    foreach(_backend D3D12 D3D11 METAL DESKTOP_GL OPENGLES NULL)
++      set(DAWN_ENABLE_${_backend} OFF CACHE INTERNAL "" FORCE)
++    endforeach()
++    set(DAWN_ENABLE_VULKAN ON CACHE INTERNAL "" FORCE)
++  elseif (WIN32)
+     set(DAWN_ENABLE_D3D12 ON CACHE INTERNAL "")
+     # Disable D3D11 because this Aurora fork does not support it.
+     set(DAWN_ENABLE_D3D11 OFF CACHE INTERNAL "")

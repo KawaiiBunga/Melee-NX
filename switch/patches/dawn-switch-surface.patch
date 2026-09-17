@@ -1,0 +1,206 @@
+--- a/src/dawn/dawn.json
++++ b/src/dawn/dawn.json
+@@ -3996,6 +3996,13 @@
+             {"name": "label", "type": "string view", "optional": true}
+         ]
+     },
++    "surface source switch native window": {
++        "category": "structure",
++        "chained": "in",
++        "chain roots": ["surface descriptor"],
++        "tags": ["dawn", "native"],
++        "members": [{"name": "window", "type": "void *"}]
++    },
+     "surface source android native window": {
+         "category": "structure",
+         "chained": "in",
+@@ -4147,6 +4154,7 @@
+ 
+             {"value": 0, "name": "emscripten surface source canvas HTML selector", "tags": ["emscripten"]},
+ 
++            {"value": 32760, "name": "surface source switch native window", "tags": ["dawn", "native"]},
+             {"value": 0, "name": "surface descriptor from windows core window", "tags": ["dawn"]},
+             {"value": 3, "name": "surface descriptor from windows UWP swap chain panel", "tags": ["dawn"]},
+             {"value": 4, "name": "dawn texture internal usage descriptor", "tags": ["dawn"]},
+--- a/src/dawn/native/Surface.h
++++ b/src/dawn/native/Surface.h
+@@ -78,6 +78,7 @@
+     enum class Type {
+         Undefined,
+         AndroidWindow,
++        SwitchWindow,
+         MetalLayer,
+         WaylandSurface,
+         WindowsHWND,
+@@ -95,6 +96,7 @@
+ 
+     // Valid to call if the type is Android
+     void* GetAndroidNativeWindow() const;
++    void* GetSwitchNativeWindow() const;
+ 
+     // Valid to call if the type is WaylandSurface
+     void* GetWaylandDisplay() const;
+@@ -159,6 +161,7 @@
+ 
+     // ANativeWindow
+     raw_ptr<void> mAndroidNativeWindow = nullptr;
++    raw_ptr<void> mSwitchNativeWindow = nullptr;
+ 
+     // Wayland
+     raw_ptr<void> mWaylandDisplay = nullptr;
+--- a/src/dawn/native/Surface.cpp
++++ b/src/dawn/native/Surface.cpp
+@@ -61,6 +61,9 @@
+     const absl::FormatConversionSpec& spec,
+     absl::FormatSink* s) {
+     switch (value) {
++        case Surface::Type::SwitchWindow:
++            s->Append("SwitchWindow");
++            break;
+         case Surface::Type::AndroidWindow:
+             s->Append("AndroidWindow");
+             break;
+@@ -112,12 +115,19 @@
+     wgpu::SType type;
+     DAWN_TRY_ASSIGN(
+         type, (descriptor.ValidateBranches<
+-                  Branch<SurfaceSourceAndroidNativeWindow>, Branch<SurfaceSourceMetalLayer>,
++                  Branch<SurfaceSourceSwitchNativeWindow>, Branch<SurfaceSourceAndroidNativeWindow>, Branch<SurfaceSourceMetalLayer>,
+                   Branch<SurfaceSourceWindowsHWND>, Branch<SurfaceDescriptorFromWindowsCoreWindow>,
+                   Branch<SurfaceDescriptorFromWindowsUWPSwapChainPanel>,
+                   Branch<SurfaceDescriptorFromWindowsWinUISwapChainPanel>,
+                   Branch<SurfaceSourceXlibWindow>, Branch<SurfaceSourceWaylandSurface>>()));
+     switch (type) {
++#if DAWN_PLATFORM_IS(SWITCH)
++        case wgpu::SType::SurfaceSourceSwitchNativeWindow: {
++            auto* subDesc = descriptor.Get<SurfaceSourceSwitchNativeWindow>();
++            DAWN_INVALID_IF(subDesc->window == nullptr, "Switch window is not set.");
++            return descriptor;
++        }
++#endif
+ #if DAWN_PLATFORM_IS(ANDROID)
+         case wgpu::SType::SurfaceSourceAndroidNativeWindow: {
+             auto* subDesc = descriptor.Get<SurfaceSourceAndroidNativeWindow>();
+@@ -300,13 +310,18 @@
+     wgpu::SType type =
+         descriptor
+             .ValidateBranches<
+-                Branch<SurfaceSourceAndroidNativeWindow>, Branch<SurfaceSourceMetalLayer>,
++                Branch<SurfaceSourceSwitchNativeWindow>, Branch<SurfaceSourceAndroidNativeWindow>, Branch<SurfaceSourceMetalLayer>,
+                 Branch<SurfaceSourceWindowsHWND>, Branch<SurfaceDescriptorFromWindowsCoreWindow>,
+                 Branch<SurfaceDescriptorFromWindowsUWPSwapChainPanel>,
+                 Branch<SurfaceDescriptorFromWindowsWinUISwapChainPanel>,
+                 Branch<SurfaceSourceXlibWindow>, Branch<SurfaceSourceWaylandSurface>>()
+             .AcquireSuccess();
+     switch (type) {
++        case wgpu::SType::SurfaceSourceSwitchNativeWindow: {
++            mType = Type::SwitchWindow;
++            mSwitchNativeWindow = descriptor.Get<SurfaceSourceSwitchNativeWindow>()->window;
++            break;
++        }
+         case wgpu::SType::SurfaceSourceAndroidNativeWindow: {
+             auto* subDesc = descriptor.Get<SurfaceSourceAndroidNativeWindow>();
+             mType = Type::AndroidWindow;
+@@ -387,6 +402,11 @@
+ Surface::Type Surface::GetType() const {
+     DAWN_CHECK(!IsError());
+     return mType;
++}
++
++void* Surface::GetSwitchNativeWindow() const {
++    DAWN_CHECK(mType == Type::SwitchWindow);
++    return mSwitchNativeWindow;
+ }
+ 
+ void* Surface::GetAndroidNativeWindow() const {
+--- a/src/dawn/common/vulkan_platform.h
++++ b/src/dawn/common/vulkan_platform.h
+@@ -188,6 +188,9 @@
+ 
+ // The actual inclusion of vulkan.h!
+ #define VK_NO_PROTOTYPES
++#if DAWN_PLATFORM_IS(SWITCH)
++#define VK_USE_PLATFORM_VI_NN
++#endif
+ #include <vulkan/vulkan.h>
+ 
+ // Redefine VK_NULL_HANDLE for better type safety where possible.
+--- a/src/dawn/native/vulkan/VulkanExtensions.h
++++ b/src/dawn/native/vulkan/VulkanExtensions.h
+@@ -47,6 +47,7 @@
+     XcbSurface,
+     XlibSurface,
+     AndroidSurface,
++    ViSurface,
+ 
+     // Others
+     DebugUtils,
+--- a/src/dawn/native/vulkan/VulkanExtensions.cpp
++++ b/src/dawn/native/vulkan/VulkanExtensions.cpp
+@@ -49,6 +49,7 @@
+     {InstanceExt::XcbSurface, "VK_KHR_xcb_surface"},
+     {InstanceExt::XlibSurface, "VK_KHR_xlib_surface"},
+     {InstanceExt::AndroidSurface, "VK_KHR_android_surface"},
++    {InstanceExt::ViSurface, "VK_NN_vi_surface"},
+ 
+     {InstanceExt::DebugUtils, "VK_EXT_debug_utils"},
+     {InstanceExt::ValidationFeatures, "VK_EXT_validation_features"},
+@@ -95,6 +96,7 @@
+                 hasDependencies = true;
+                 break;
+ 
++            case InstanceExt::ViSurface:
+             case InstanceExt::AndroidSurface:
+             case InstanceExt::FuchsiaImagePipeSurface:
+             case InstanceExt::MetalSurface:
+--- a/src/dawn/native/vulkan/VulkanFunctions.h
++++ b/src/dawn/native/vulkan/VulkanFunctions.h
+@@ -179,6 +179,10 @@
+     VkFn<PFN_vkGetPhysicalDeviceWin32PresentationSupportKHR>
+         GetPhysicalDeviceWin32PresentationSupportKHR = nullptr;
+ #endif  // DAWN_PLATFORM_IS(WINDOWS)
++
++#if DAWN_PLATFORM_IS(SWITCH)
++    VkFn<PFN_vkCreateViSurfaceNN> CreateViSurfaceNN = nullptr;
++#endif
+ 
+ #if DAWN_PLATFORM_IS(ANDROID)
+     // KHR_android_surface
+--- a/src/dawn/native/vulkan/VulkanFunctions.cpp
++++ b/src/dawn/native/vulkan/VulkanFunctions.cpp
+@@ -204,6 +204,11 @@
+     }
+ #endif  // DAWN_PLATFORM_IS(WINDOWS)
+ 
++#if DAWN_PLATFORM_IS(SWITCH)
++    if (globalInfo.HasExt(InstanceExt::ViSurface)) {
++        GET_INSTANCE_PROC(CreateViSurfaceNN);
++    }
++#endif
+ #if DAWN_PLATFORM_IS(ANDROID)
+     if (globalInfo.HasExt(InstanceExt::AndroidSurface)) {
+         GET_INSTANCE_PROC(CreateAndroidSurfaceKHR);
+--- a/src/dawn/native/vulkan/SwapChainVk.cpp
++++ b/src/dawn/native/vulkan/SwapChainVk.cpp
+@@ -648,6 +648,21 @@
+             break;
+ #endif  // DAWN_PLATFORM_IS(WINDOWS)
+ 
++#if DAWN_PLATFORM_IS(SWITCH)
++        case Surface::Type::SwitchWindow: {
++            if (info.HasExt(InstanceExt::ViSurface)) {
++                VkViSurfaceCreateInfoNN createInfo = {};
++                createInfo.sType = VK_STRUCTURE_TYPE_VI_SURFACE_CREATE_INFO_NN;
++                createInfo.window = surface->GetSwitchNativeWindow();
++                VkSurfaceKHR vkSurface = VK_NULL_HANDLE;
++                DAWN_TRY(CheckVkSuccess(
++                    fn.CreateViSurfaceNN(vkInstance, &createInfo, nullptr, &*vkSurface),
++                    "CreateViSurfaceNN"));
++                return vkSurface;
++            }
++            break;
++        }
++#endif
+ #if DAWN_PLATFORM_IS(ANDROID)
+         case Surface::Type::AndroidWindow: {
+             if (info.HasExt(InstanceExt::AndroidSurface)) {

@@ -1,0 +1,15 @@
+--- a/lib/webgpu/gpu.cpp
++++ b/lib/webgpu/gpu.cpp
+@@ -662,9 +662,12 @@
+ #ifdef WEBGPU_DAWN
+     wgpu::DawnCacheDeviceDescriptor cacheDescriptor({
+         .isolationKey = nullptr,
++#ifndef __SWITCH__
++        // Switch uses newer Dawn, whose descriptor no longer exposes callbacks.
+         .loadDataFunction = load_from_cache,
+         .storeDataFunction = store_to_cache,
+         .functionUserdata = nullptr,
++#endif
+     });
+ 
+     std::vector<const char*> enableToggles{
