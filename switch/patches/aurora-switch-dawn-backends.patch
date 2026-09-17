@@ -1,0 +1,32 @@
+--- a/cmake/AuroraDawnProvider.cmake
++++ b/cmake/AuroraDawnProvider.cmake
+@@ -14,5 +14,12 @@
+ function(_aurora_dawn_set_platform_backends)
+-  if (WIN32)
++  if (CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch")
++    # Match the local Vulkan-only Dawn build (see switch/cmake/DawnOptions.cmake);
++    # do not advertise a null fallback the linked library doesn't contain.
++    foreach (_backend D3D12 D3D11 METAL DESKTOP_GL OPENGLES NULL)
++      set(DAWN_ENABLE_${_backend} OFF CACHE INTERNAL "" FORCE)
++    endforeach ()
++    set(DAWN_ENABLE_VULKAN ON CACHE INTERNAL "" FORCE)
++  elseif (WIN32)
+     set(DAWN_ENABLE_D3D12 ON CACHE INTERNAL "")
+     set(DAWN_ENABLE_D3D11 ON CACHE INTERNAL "")
+     set(DAWN_ENABLE_VULKAN ON CACHE INTERNAL "")
+--- a/lib/webgpu/gpu.cpp
++++ b/lib/webgpu/gpu.cpp
+@@ -268,6 +268,13 @@
+     }
+     return false;
+   };
++#ifdef __SWITCH__
++  // Bring-up follows the FIFO path already demonstrated by the native probe.
++  // Revisit latency/interpolation after Aurora has been measured on hardware.
++  if (supports(wgpu::PresentMode::Fifo)) {
++    return wgpu::PresentMode::Fifo;
++  }
++#endif
+   if (vsync_enabled()) {
+     if (supports(wgpu::PresentMode::FifoRelaxed)) {
+       return wgpu::PresentMode::FifoRelaxed;

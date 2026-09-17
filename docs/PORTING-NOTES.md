@@ -16,22 +16,73 @@ Rendering path: **game C → Aurora GX → Dawn WebGPU → Vulkan → NVK → li
 Solution: `SwitchGCC.cmake` uses `aarch64-none-elf-gcc` for C files and Clang for C++.
 Aurora and its dependencies compile fine with either.
 
-### 2. No -no-pie / -Ttext-segment=0x10000000
-melee-pc pins MEM1 at 0x80000000 using `-no-pie` and places its text at 0x10000000 on
-Linux so 32-bit disc pointer slots always fit. On Switch:
-- NRO format is always PIE — the loader patches relocations at load time.
-- `switch/patches/melee-switch-gcc-compat.patch` removes these linker flags.
-- MEM1 at 0x80000000 must be satisfied a different way: either `mmap(0x80000000, ...)`
-  with FIXED + anonymous mapping (same trick as KartPad-NX's guest_flat_memory), or
-  verifying that libnx's address space leaves 0x80000000 available (on 64-bit HOS it
-  usually does in the 39-bit user VA range).
+### 2. No -no-pie / -Ttext-segment=0x10000000 — and no MEM1 fixed-address mmap either
+`switch/CMakeLists.txt` builds `melee_game`/`melee` from globbed `ref/melee-pc/src/**`
+sources directly; it never `add_subdirectory()`s or reads melee-pc's own
+`CMakeLists.txt`. That file's `-no-pie -Wl,-Ttext-segment=0x10000000` (used on Linux
+to keep MEM1 below 4GB for 32-bit disc pointer slots) is simply never invoked for the
+Switch build — there is nothing to strip.
 
-**Status:** patch not yet written — this is the first task for the initial bring-up session.
+**MEM1 does not need a fixed low address on Switch at all.** `src/pc/disc.h`'s
+`pc_encode_dp()`/`pc_resolve_dp()` (backed by `pc_register_ext_ptr`/`pc_resolve_ext_ptr`
+in `src/pc/os.c`) already have a generic fallback: any host pointer that doesn't fit in
+32 bits is stored as `0x02000000 | index` into a 65536-entry indirection table instead
+of being truncated. This exists in upstream melee-pc already (almost certainly for the
+Android build, which is PIE/ASLR and can't guarantee sub-4GB addresses either) — it is
+not something melee-nx invented.
+
+Consequently `AllocMEM1()` in `extern/aurora/lib/dolphin/os/OSMemory.cpp` only has real
+fixed-address logic for `_WIN32` and `__linux__` (x86_64/aarch64); every other platform,
+including `__SWITCH__`, already falls through to the generic `calloc(1, size)` branch,
+and that's correct — no aurora patch is needed for this. (An earlier version of this
+scaffold shipped `switch/src/mem1_switch.c`, which tried to `mmap(..., MAP_FIXED)` at
+0x80000000. That was wrong on two counts: devkitA64/libnx has no `<sys/mman.h>` at all
+— confirmed by searching the installed toolchain — so it wouldn't have compiled, and it
+was solving a problem the ext-pointer fallback already solves. It has been deleted.)
+
+**Watch for on first hardware run:**
+- The 65536-slot ext-pointer table is a linear-scan-on-insert array (see
+  `pc_register_ext_ptr` in `src/pc/os.c`). It's only hit when a disc pointer is stored
+  (archive load/relocation, not per-frame), so it should be a one-time cost per loaded
+  archive — but a stage that registers many thousands of unique pointers could get
+  slow, and hitting the 65536 cap aborts (`pc_disc_ptr_overflow`). If this becomes a
+  real problem, raise `PC_MAX_EXT_PTRS` or switch it to a hash map.
+- libnx's default heap sizing (via `__libnx_initheap`) may or may not be large enough
+  for MEM1 (96 MB) + ARAM (16 MB) + Dawn/Aurora + game working set. No override has
+  been added preemptively since the libnx default usually claims most of the applet's
+  available memory automatically — verify actual behavior (or an `abort()`/OOM from
+  `calloc`) on the first successful link + hardware boot, and add a heap-size override
+  in `main_switch.cpp` (`__nx_heap_size`/`__libnx_initheap`) only if needed.
+
+### 2b. melee-pc's aurora fork has drifted from KartPad-NX's — patches were rewritten
+`ref/melee-pc/extern/aurora` is melee-pc's own vendored aurora checkout, not the same
+snapshot KartPad-NX built against (different namespace style in `BackendBinding.cpp`,
+a simpler `create_window()` that already sets the external-graphics-context property
+generically, and a `DawnCacheDeviceDescriptor` construction that's already past the API
+shape KartPad's `aurora-switch-dawn-api.patch` guarded against). Applying KartPad-NX's
+three aurora patches verbatim failed outright (`git apply --check` fails, not just
+"already applied" — confirmed by testing the reverse-check too). Concretely:
+- `aurora-switch-dawn-api.patch` — **not needed**. melee-pc's aurora already builds
+  `DawnCacheDeviceDescriptor` with only `.nextInChain`, matching the newer Dawn API
+  the patch was trying to guard against.
+- Window/fullscreen handling — **not needed as an aurora patch**. melee-pc's aurora
+  already sets the SDL external-graphics-context property for any non-null backend,
+  and already exposes `AuroraConfig::startFullscreen`. `melee-switch-gcc-compat.patch`
+  just sets `.startFullscreen = true` under `__SWITCH__` in `main.c` instead of
+  touching `lib/window.cpp`.
+- `aurora-switch-surface.patch` and the CMake/present-mode half of
+  `aurora-switch-window.patch` — **rewritten** against melee-pc's actual file layout as
+  `aurora-switch-surface.patch` (constructs `SurfaceSourceSwitchNativeWindow` from
+  `nwindowGetDefault()` in `BackendBinding.cpp`) and `aurora-switch-dawn-backends.patch`
+  (Vulkan-only `DAWN_ENABLE_*` for `CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch"`, plus
+  forcing present mode to `Fifo` on Switch for bring-up, same rationale as KartPad-NX).
+  Both verified with `git apply --check` against the cloned tree.
 
 ### 3. Filesystem paths
-melee-pc reads `launcher.cfg` from `SDL_GetPrefPath("", "melee-pc")`. On Switch,
-SDL3 maps this to `sdmc:/switch/melee-nx/`. The disc image path in the config must
-point to `sdmc:/switch/melee-nx/disc.iso` or similar.
+melee-pc reads `launcher.cfg` from `SDL_GetPrefPath(NULL, "melee-pc")`.
+`melee-switch-gcc-compat.patch` swaps the app id to `"melee-nx"` under `__SWITCH__`, so
+on Switch this resolves (via SDL3's Switch backend) to `sdmc:/switch/melee-nx/`. The
+disc image path in the config must point to `sdmc:/switch/melee-nx/disc.iso` or similar.
 
 ### 4. SQLite / shader cache on FAT32
 Same issue as KartPad-NX — solved identically:
@@ -59,17 +110,23 @@ far lighter than MKW. GPU is not the bottleneck (same as KartPad-NX; endFrame �
 
 ## Bring-up sequence
 
-1. **Write `melee-switch-gcc-compat.patch`**: remove `-no-pie`/`-Ttext-segment`,
-   add MEM1 mmap shim or verify 0x80000000 is available, fix any `getenv`/path calls
-   that assume Linux `/home/` prefixes.
-2. **Verify Dawn/SDL3 patches apply** to the same ref/ trees (they're identical to
-   KartPad-NX — should be a no-op copy).
-3. **First configure attempt**: `builder/build-melee.sh configure` — fix any CMake
-   errors (missing includes, wrong arch flags for GCC C vs Clang CXX split).
-4. **First build attempt**: expect errors from the melee-pc game code under aarch64-none-elf
-   GCC (struct size assertions via `ASSERT_SIZE`/`ASSERT_OFFSET`, any LP64 pointer issues
-   the melee-pc porting notes don't cover yet for NRO target).
-5. **Boot on hardware**: once it links, test disc load, rendering, input.
+1. ~~Write `melee-switch-gcc-compat.patch`~~ — done. Renames melee-pc's `main()` to
+   `melee_main_impl()` under `__SWITCH__` (avoids a duplicate-`main` link error against
+   `switch/src/main_switch.cpp`'s NRO entry), swaps the SDL pref-path app id to
+   `melee-nx`, and sets `startFullscreen`. See section 2 above for why no
+   MEM1/linker-flag patch was needed.
+2. ~~Rewrite the aurora patches against melee-pc's actual vendored aurora~~ — done.
+   See section 2b above.
+3. ~~Clone `ref/dawn` and `ref/SDL`~~ — done, copied from KartPad-NX per `docs/DEPS.md`.
+4. **`builder/build-graphics.sh all`** inside the `kartpad-dawn` Docker image — builds
+   Dawn + SDL3 for Switch. Should closely mirror KartPad-NX's known-good build. Not yet
+   run (needs the Docker toolchain, not available on this Windows host).
+5. **`builder/build-melee.sh all`** — applies the compat patch, configures, and builds
+   the NRO. Expect compile errors from melee-pc's game code under
+   `aarch64-none-elf-gcc` (struct size assertions via `DISC_ASSERT_SIZE`, warnings
+   promoted to errors, etc.) — iterate.
+6. **Boot on hardware**: once it links, test disc load, MEM1/ext-pointer behavior under
+   real memory pressure, rendering, input.
 
 ## Known risks
 

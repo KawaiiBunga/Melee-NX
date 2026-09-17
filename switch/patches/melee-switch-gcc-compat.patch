@@ -14,7 +14,7 @@
  #if defined(_WIN32)
      SetUnhandledExceptionFilter(crash_handler);
  #endif
-@@ -297,13 +301,18 @@
+@@ -297,13 +301,23 @@
          } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
              usage(argv[0]);
          }
@@ -33,6 +33,11 @@
 +        .appName = getenv("MELEE_WINDOW_TITLE") ? getenv("MELEE_WINDOW_TITLE") : kMeleeAppId,
 +        .userPath = SDL_GetPrefPath(NULL, kMeleeAppId),
 +        .cachePath = SDL_GetPrefPath(NULL, kMeleeAppId),
++#if defined(__SWITCH__)
++        /* No window manager on Switch; aurora's window.cpp only forces
++         * SDL_WINDOW_FULLSCREEN for TARGET_OS_IOS/TV unless this is set. */
++        .startFullscreen = true,
++#endif
          .msaa = 1,
          .maxTextureAnisotropy = 16,
          /* MELEE_VSYNC=0 picks Mailbox/Immediate instead of FifoRelaxed; some

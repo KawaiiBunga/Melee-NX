@@ -49,8 +49,9 @@ endforeach()
 set(_MELEE_COMMON_FLAGS
   "-march=armv8-a+crc+crypto -mtune=cortex-a57 -ffunction-sections -fdata-sections -D__SWITCH__ -D_GNU_SOURCE -D_DEFAULT_SOURCE -Wno-multichar")
 
-# GCC C flags: add big-endian struct support, Shift-JIS charset, no-PIE (melee needs
-# static MEM1 at 0x80000000; Switch NRO handles this differently — see patch notes).
+# GCC C flags: big-endian struct support, Shift-JIS charset. melee-pc's disc-pointer
+# scheme (src/pc/disc.h) already tolerates MEM1 living above 4GB via an ext-pointer
+# table, so unlike the Linux build there is no -no-pie/-Ttext-segment here to match.
 set(CMAKE_C_FLAGS
   "${_MELEE_COMMON_FLAGS} -fexec-charset=CP932 -fno-strict-aliasing -fwrapv -ffp-contract=off"
   CACHE STRING "" FORCE)
