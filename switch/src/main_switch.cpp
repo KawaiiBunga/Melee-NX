@@ -11,8 +11,8 @@
 #include <cstdio>
 
 // Declared in melee-pc's src/pc/main.c — forward-declared here so we can call
-// it after service init. The actual melee "main" is renamed via a compile
-// definition in CMakeLists.txt: -DMELEE_MAIN=melee_main_impl so we own main().
+// it after service init. melee-switch-gcc-compat.patch renames melee-pc's
+// main() to melee_main_impl() under __SWITCH__ so we own main() here instead.
 extern "C" int melee_main_impl(int argc, char** argv);
 
 // Filesystem root on SD card — passed to melee-pc via MELEE_DVD env equivalent.
