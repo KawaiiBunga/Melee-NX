@@ -47,6 +47,7 @@ prepare() {
   apply_patch_once "$dawn"                        "$repo/switch/patches/dawn-switch-libnx.patch"
   apply_patch_once "$dawn/third_party/abseil-cpp" "$repo/switch/patches/dawn-abseil-switch.patch"
   apply_patch_once "$dawn"                        "$repo/switch/patches/dawn-switch-surface.patch"
+  apply_patch_once "$dawn"                        "$repo/switch/patches/dawn-switch-renderdoc.patch"
   apply_patch_once "$sdl"                         "$repo/switch/patches/sdl-switch-external-graphics.patch"
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-surface.patch"
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-dawn-backends.patch"

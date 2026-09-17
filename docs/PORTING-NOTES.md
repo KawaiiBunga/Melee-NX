@@ -84,12 +84,20 @@ melee-pc reads `launcher.cfg` from `SDL_GetPrefPath(NULL, "melee-pc")`.
 on Switch this resolves (via SDL3's Switch backend) to `sdmc:/switch/melee-nx/`. The
 disc image path in the config must point to `sdmc:/switch/melee-nx/disc.iso` or similar.
 
-### 4. SQLite / shader cache on FAT32
-Same issue as KartPad-NX — solved identically:
-- `PRAGMA journal_mode=MEMORY; PRAGMA synchronous=OFF;`
-- Strip `sdmc:` prefix from paths before passing to SQLite's VFS.
-Aurora's `AuroraSwitchSQLite.cmake` already applies these pragmas if included (it's
-wired in `Graphics.cmake`).
+### 4. SQLite / shader cache on FAT32 — NOT actually wired yet
+`Graphics.cmake` optionally includes `${MELEE_AURORA_SOURCE}/cmake/AuroraSwitchSQLite.cmake`
+and calls `aurora_configure_switch_sqlite(sqlite3)` if that file exists (this mirrors
+KartPad-NX, whose own aurora fork has this file). **melee-pc's vendored aurora does not
+have this file** — confirmed, `find` turns up nothing under `extern/aurora`. The
+`include(... OPTIONAL)` silently no-ops and the `if(COMMAND ...)` guard skips the call,
+so this is safe (won't break the build) but the FAT32-friendly pragmas
+(`PRAGMA journal_mode=MEMORY; PRAGMA synchronous=OFF;`) are **not applied**. `sqlite3`
+is a real CMake target here (defined in `extern/aurora/extern/CMakeLists.txt`, used for
+Dawn's shader cache). Until this is addressed, expect possible slow or unreliable
+shader-cache writes to the SD card on hardware — watch for this in first-boot testing,
+and if it's a problem, either add a small `AuroraSwitchSQLite.cmake` to melee-pc's
+aurora fork (patchable via a new aurora patch) or set the pragmas directly wherever
+aurora opens the shader cache DB.
 
 ### 5. pthread stack size + exit() wrapping
 Dawn/Tint WGSL compiler needs ~54 KB stack frames. libnx default pthread stack is
