@@ -67,6 +67,12 @@ file(GLOB PC_SOURCES CONFIGURE_DEPENDS
   "${MELEE_PC_ROOT}/src/pc/*.c"
   "${MELEE_PC_ROOT}/src/pc/*.cpp")
 list(REMOVE_ITEM PC_SOURCES "${MELEE_PC_ROOT}/src/pc/vtxarray.c")
+# Self-update over the GitHub releases API makes no sense for homebrew, and its
+# recursive JsonValue trips a libstdc++-15 completeness check devkitA64 enforces
+# more strictly than other platforms' standard libraries. Replaced by
+# switch/src/updater_stub_switch.cpp (satisfies launcher.cpp's pc::updater::
+# calls, which this port's boot flow never actually reaches).
+list(REMOVE_ITEM PC_SOURCES "${MELEE_PC_ROOT}/src/pc/updater.cpp")
 
 # Switch-specific platform shim sources. src/nod/ is built as its own static
 # lib (nod_shim, see Graphics.cmake) and src/game_data/ needs SDL3's headers,
