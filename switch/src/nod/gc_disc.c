@@ -292,6 +292,9 @@ void gc_disc_walk_fst(GcDisc* disc, GcFstWalkFn callback, void* user_data) {
         const GcFstEntry* e = &disc->fst[i];
         uint32_t size_or_next = e->is_dir ? e->next_index : e->file_length;
         uint32_t next = callback(i, e->is_dir, e->name ? e->name : "", size_or_next, user_data);
+        if (next == GC_FST_WALK_STOP) {
+            return;
+        }
         i = (next > i) ? next : (i + 1);
     }
 }

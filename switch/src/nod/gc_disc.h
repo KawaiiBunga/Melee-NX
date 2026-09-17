@@ -86,9 +86,15 @@ GcDisc* gc_disc_open_path(const char* path);
 /* Parses the FST on first call; a no-op afterward. Returns 0 on failure. */
 int gc_disc_ensure_fst(GcDisc* disc);
 
+/* Return this from a GcFstWalkFn to stop the walk early (e.g. user canceled
+ * an extraction in progress). Safe because real FST entry counts never reach
+ * this: GC_FST_MAX_ENTRIES caps parsing well below it. */
+#define GC_FST_WALK_STOP 0xFFFFFFFFu
+
 /* Walks FST entries [1, fst_count), depth-first pre-order (matching on-disc
- * order). `callback` returns the index to resume from (normally index + 1).
- * Requires gc_disc_ensure_fst() to have succeeded. */
+ * order). `callback` returns the index to resume from (normally index + 1;
+ * see GC_FST_WALK_STOP to abort). Requires gc_disc_ensure_fst() to have
+ * succeeded. */
 typedef uint32_t (*GcFstWalkFn)(
     uint32_t index, int is_dir, const char* name, uint32_t size_or_next, void* user_data);
 void gc_disc_walk_fst(GcDisc* disc, GcFstWalkFn callback, void* user_data);
