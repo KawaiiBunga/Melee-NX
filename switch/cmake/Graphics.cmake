@@ -38,11 +38,27 @@ set_target_properties(SDL3::SDL3-static PROPERTIES
   IMPORTED_LOCATION "${MELEE_SDL_BUILD}/libSDL3.a"
   INTERFACE_INCLUDE_DIRECTORIES "${MELEE_SDL_SOURCE}/include")
 
+# ── nod (disc reading) ────────────────────────────────────────────────────────
+# Real `nod` is a Rust crate (github.com/encounter/nod); Rust has no official
+# Switch/Horizon target. switch/src/nod/ is a from-scratch C reimplementation
+# of the small slice of nod's C ABI melee-pc/aurora actually call (see
+# nod_shim.c), backed by a plain-C single-partition GameCube disc reader
+# (gc_disc.c). Predefining nod::nod here (same trick as Dawn/SDL3 above) makes
+# AuroraNodProvider.cmake's "system" branch use it instead of trying to
+# FetchContent+Corrosion the real crate.
+add_library(nod_shim STATIC
+  "${CMAKE_CURRENT_LIST_DIR}/../src/nod/gc_disc.c"
+  "${CMAKE_CURRENT_LIST_DIR}/../src/nod/nod_shim.c")
+target_include_directories(nod_shim PUBLIC "${CMAKE_CURRENT_LIST_DIR}/../src/nod")
+add_library(nod::nod ALIAS nod_shim)
+set(nod_FOUND TRUE)
+
 set(Dawn_FOUND TRUE)
 set(SDL3_FOUND TRUE)
 set(AURORA_DAWN_PROVIDER system CACHE STRING "" FORCE)
 set(AURORA_SDL3_PROVIDER system CACHE STRING "" FORCE)
 set(AURORA_SDL3_LINKAGE  static CACHE STRING "" FORCE)
+set(AURORA_NOD_PROVIDER  system CACHE STRING "" FORCE)
 
 # melee-pc uses DVD, CARD, THP, and RmlUi — keep them all on.
 set(AURORA_ENABLE_DVD   ON  CACHE BOOL "" FORCE)
