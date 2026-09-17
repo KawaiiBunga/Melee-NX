@@ -56,17 +56,24 @@ file(GLOB PC_SOURCES CONFIGURE_DEPENDS
   "${MELEE_PC_ROOT}/src/pc/*.cpp")
 list(REMOVE_ITEM PC_SOURCES "${MELEE_PC_ROOT}/src/pc/vtxarray.c")
 
-# Switch-specific platform shim sources
+# Switch-specific platform shim sources. src/nod/ is built as its own static
+# lib (nod_shim, see Graphics.cmake) and src/game_data/ needs SDL3's headers,
+# so both are globbed separately from the top-level shims below.
 file(GLOB SWITCH_SOURCES CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_LIST_DIR}/src/*.c"
   "${CMAKE_CURRENT_LIST_DIR}/src/*.cpp")
+file(GLOB GAME_DATA_SOURCES CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_LIST_DIR}/src/game_data/*.cpp")
+list(APPEND SWITCH_SOURCES ${GAME_DATA_SOURCES})
 
 add_executable(melee ${PC_SOURCES} ${SWITCH_SOURCES})
 target_compile_options(melee PRIVATE -march=armv8-a+crc+crypto -mtune=cortex-a57)
+target_include_directories(melee PRIVATE "${CMAKE_CURRENT_LIST_DIR}/src/game_data")
 target_link_libraries(melee PRIVATE melee_game aurora::main ${MELEE_CRYPTO_LIBS} ${MELEE_NETWORK_LIBS})
 
 # NRO uses PIE + specs; drop melee-pc's Linux-only -no-pie/-Ttext-segment.
-# MEM1 at 0x80000000 is managed by the Switch platform shim instead.
+# MEM1 does not need a fixed low address at all — melee-pc's disc-pointer
+# scheme already tolerates addresses above 4GB (see docs/PORTING-NOTES.md §2).
 target_link_options(melee PRIVATE
   -stdlib=libstdc++
   -L${DEVKITPRO}/libnx/lib
