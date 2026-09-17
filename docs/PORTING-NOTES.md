@@ -138,25 +138,76 @@ far lighter than MKW. GPU is not the bottleneck (same as KartPad-NX; endFrame �
 
 ## Confirmed by an actual build (not just static review)
 
-Docker + the `kartpad-dawn` image were available on the dev machine, so the graphics
-half of the bring-up sequence was actually run, not just planned:
+Docker + the `kartpad-dawn` image were available on the dev machine, so the whole
+bring-up sequence was actually run end-to-end, not just planned. Both
+`builder/build-graphics.sh all` and `builder/build-melee.sh all` now complete and
+produce a real `build/switch/melee.nro` (34 MB) from a `melee.elf` (330 MB,
+unstripped). The patch set (`builder/build-graphics.sh prepare`) applies cleanly.
+Along the way, three real, non-obvious problems had to be found and fixed —
+none of them things static review would have caught:
 
-- `builder/build-graphics.sh prepare` — all 7 patches apply cleanly (or are already
-  applied) against freshly cloned/copied `ref/dawn`, `ref/SDL`, `ref/melee-pc`.
-- `builder/build-graphics.sh dawn` — **found and fixed a real build break**: Dawn's
-  vendored `third_party/renderdoc/renderdoc/api/app/renderdoc_app.h` only recognizes
-  Windows/Linux/BSD/Apple for its `RENDERDOC_CC` calling-convention macro and hits
-  `#error "Unknown platform"` for `__SWITCH__`. Because `RENDERDOC_CC` then expands to
-  nothing predictable, every subsequent `typedef` in that header cascades into bogus
-  "typedef redefinition"/"expected ')'" errors that look unrelated to the real cause.
-  Fixed with `dawn-switch-renderdoc.patch` (adds `__SWITCH__` next to `__linux__` etc. —
-  Switch needs no special calling-convention keyword either). **After this fix, Dawn
-  built to completion**: `libwebgpu_dawn.a` (~472 MB) links successfully.
-- `builder/build-graphics.sh sdl` — run next; see git history / session log for result.
+**1. Dawn's renderdoc header didn't know `__SWITCH__`.** Vendored
+`third_party/renderdoc/renderdoc/api/app/renderdoc_app.h` only recognizes
+Windows/Linux/BSD/Apple for its `RENDERDOC_CC` calling-convention macro and hits
+`#error "Unknown platform"` otherwise. Because `RENDERDOC_CC` then expands to
+nothing predictable, every subsequent `typedef` in the header cascades into bogus
+"typedef redefinition"/"expected ')'" errors that look unrelated to the real cause.
+Fixed with `dawn-switch-renderdoc.patch` (adds `__SWITCH__` next to `__linux__` —
+Switch needs no special calling-convention keyword either).
 
-This is meaningfully more confidence than the original scaffold had: the Vulkan-only
-Dawn configuration, the GCC/Clang toolchain split, and all Dawn-side Switch patches are
-now proven to compile, not just planned to.
+**2. Clang silently ignores `-specs=switch.specs` for `aarch64-none-elf`.**
+Confirmed with `-v`: neither the linker-script (`-T switch.ld`), the PIE/`-z`
+flags, nor the `crti.o`/`crtbegin.o` startfile objects it's supposed to inject
+ever appear in the generated link line, regardless of `-specs=`/`--rtlib=`/
+`--unwindlib=`. GCC (which every "official" devkitPro Switch project uses,
+including KartPad-NX) honors `-specs=` fine — this is specifically a Clang gap,
+hit here because melee's game code needs GCC for
+`__attribute__((scalar_storage_order(...)))` while everything else is Clang.
+Symptom without the fix: undefined `__tls_start`/`__tls_end`/`__bss_start__`/
+`__got_start__`/`_DYNAMIC`/`__argdata__`/etc. — all section-boundary symbols
+`switch.ld` defines and libnx's `crt0`/TLS setup expects. Fixed by hand-expanding
+`switch.specs`' `*link`/`*startfile` blocks directly into `melee`'s
+`target_link_options` in `switch/CMakeLists.txt` (`-Wl,-T,switch.ld -Wl,-pie
+-Wl,--no-dynamic-linker -Wl,-z,text -Wl,-z,now -Wl,--build-id=sha1
+-Wl,--require-defined=main` plus literal `crti.o`/`crtbegin.o` objects), and by
+switching the linker Clang invokes from its default (this container's system
+lld, which doesn't support several of those flags at all) to devkitA64's own
+`aarch64-none-elf-ld` via `-fuse-ld=`.
+
+That fix then exposed **PIC/PIE mismatch**: linking against devkitA64's default
+(non-PIC) `libstdc++`/`libc`/`libgcc`/etc. produced "read-only segment has
+dynamic relocations" from a PIE final link. devkitPro's own
+`Platform/Generic-dkP.cmake` adds `-fPIC` to every NintendoSwitch target's arch
+flags for exactly this reason; our toolchain file didn't. Fixed by adding
+`-fPIC` to `SwitchGCC.cmake`'s common flags and switching every `-L` search
+path (and the libgcc probe) to devkitA64's PIC multilib
+(`aarch64-none-elf/lib/pic`, `lib/gcc/.../pic`) instead of the default one —
+which meant Dawn (built via this same toolchain file) needed a rebuild too,
+since its archives were already compiled non-PIC.
+
+**3. Switch has no real Vulkan implementation available in the `kartpad-dawn`
+image.** devkitPro's own `switch-mesa` package, installed there, is EGL/GLES
+only (`libEGL.a`/`libGLESv2.a`, no `libvulkan.a`) — confirmed by inspecting its
+pacman file list in-container. Real Switch homebrew Vulkan comes only from
+Mesa's NVK driver, which needs its own Rust-enabled cross-build (NAK, NVK's
+shader compiler, is written in Rust, which has no Horizon/`aarch64-none-elf`
+target — the same gap `nod` hit, see `switch/src/nod/`). That build is
+substantial and out of scope to reproduce here a second time; KartPad-NX
+already has it built (`switch/overlays/mesa-switch/`), so melee-nx reuses that
+prebuilt tree directly via a second read-only bind mount rather than rebuilding
+it — see `docs/DEPS.md`'s "Mesa/NVK" section for the exact command and the
+caveat that this is a dev-machine-specific shortcut, not a portable solution.
+Once mounted, the remaining undefined symbols (`vkGetInstanceProcAddr`,
+`sysconf`, `fchown`, `waitpid`, `execvp`) all resolved for free from files
+KartPad-NX had already written for the exact same problem
+(`rust_switch_stubs.c`, plus a small local `geteuid()` shim in
+`switch/src/libc_switch.c`).
+
+This is meaningfully more confidence than the original scaffold had: every part
+of the graphics stack, the GCC/Clang toolchain split, the full patch set, and
+the final NVK-backed Vulkan link are now proven to compile and link, not just
+planned to. Hardware testing (does it actually boot and render) is the next
+open question.
 
 ## Known risks
 

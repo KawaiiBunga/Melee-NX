@@ -1,21 +1,67 @@
+diff --git a/src/pc/main.c b/src/pc/main.c
+index 0954e60..e82d374 100644
 --- a/src/pc/main.c
 +++ b/src/pc/main.c
-@@ -274,8 +274,12 @@
-     fprintf(stderr, "\nMELEE_BACKEND: falling back to auto\n");
+@@ -78,9 +78,45 @@ void pc_log_line(const char* fmt, ...) {
+     }
+ }
+ 
++#if defined(__SWITCH__)
++/* stdout/stderr are per-_reent (per-thread) FILE* on this newlib/libnx target,
++ * each thread getting its own copy inherited by pointer-value at thread-
++ * creation time. aurora/Dawn run plenty of their own worker threads (shader
++ * compilation, adapter/device enumeration), and hardware testing showed a
++ * background thread's first stdout write after boot hitting a null devoptab
++ * entry inside newlib (Data Abort, address 0) -- the same failure this fixed
++ * for melee's own OSReport() (see os.c's switch_log_vwrite). Route Aurora's
++ * log sink through the same kind of dedicated, mutex-serialized FILE* instead
++ * of stdout/stderr so it can't hit the same bug from a Dawn worker thread. */
++#include <pthread.h>
++
++static pthread_mutex_t s_switch_log_mutex = PTHREAD_MUTEX_INITIALIZER;
++static FILE* s_switch_log_file;
++
++static FILE* switch_log_file_locked(void) {
++    if (!s_switch_log_file) {
++        s_switch_log_file = fopen("sdmc:/switch/melee-nx/melee-nx-runtime.log", "a");
++    }
++    return s_switch_log_file;
++}
++#endif
++
+ static void log_callback(
+     AuroraLogLevel level, const char* module, const char* message, unsigned int len) {
+-#if defined(__ANDROID__)
++#if defined(__SWITCH__)
++    const double t = log_now_ms();
++    static const char* const names[] = {"DEBUG", "INFO", "WARN", "ERROR", "FATAL"};
++    pthread_mutex_lock(&s_switch_log_mutex);
++    FILE* out = switch_log_file_locked();
++    if (out) {
++        fprintf(out, "[%9.3f] [%s] %s: %.*s\n", t, names[level], module, (int)len, message);
++        fflush(out);
++    }
++    pthread_mutex_unlock(&s_switch_log_mutex);
++    if (level == LOG_FATAL) {
++        abort();
++    }
++#elif defined(__ANDROID__)
+     int prio = ANDROID_LOG_INFO;
+     switch (level) {
+     case LOG_DEBUG:
+@@ -275,7 +311,11 @@ static AuroraBackend backend_from_env(void) {
      return BACKEND_AUTO;
  }
-
--MELEE_EXPORT int main(int argc, char* argv[]) {
+ 
 +#if defined(__SWITCH__)
 +MELEE_EXPORT int melee_main_impl(int argc, char* argv[]) {
 +#else
-+MELEE_EXPORT int main(int argc, char* argv[]) {
+ MELEE_EXPORT int main(int argc, char* argv[]) {
 +#endif
  #if defined(_WIN32)
      SetUnhandledExceptionFilter(crash_handler);
  #endif
-@@ -297,13 +301,23 @@
-         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+@@ -298,12 +338,37 @@ MELEE_EXPORT int main(int argc, char* argv[]) {
              usage(argv[0]);
          }
      }
@@ -24,6 +70,21 @@
 +#else
 +    static const char* const kMeleeAppId = "melee-pc";
 +#endif
++#if defined(__SWITCH__)
++    /* SDL3 has no filesystem backend for Switch at all (no src/filesystem/switch/;
++     * it falls through to the "dummy" backend), so SDL_GetPrefPath() always
++     * returns NULL here. Passing that straight to aurora's cache_init()
++     * (gpu_cache.cpp:39) calls strlen() on it and Data Aborts at address 0
++     * (hardware-confirmed) the moment Dawn's shader cache is first touched.
++     * Use the same SD card root the on-device disc-extraction gate already
++     * writes to (switch/src/game_data/game_data_gate.h's kDataRoot) instead of
++     * ever calling SDL_GetPrefPath() on this platform. */
++    static const char* const kMeleeUserPath = "sdmc:/switch/melee-nx/";
++    static const char* const kMeleeCachePath = "sdmc:/switch/melee-nx/";
++#else
++    static const char* const kMeleeUserPath = NULL;
++    static const char* const kMeleeCachePath = NULL;
++#endif
      AuroraConfig config = {
          /* appName doubles as the window title; the save/cache dirs stay
           * pinned so a renamed test window still uses the same memory card. */
@@ -31,8 +92,8 @@
 -        .userPath = SDL_GetPrefPath(NULL, "melee-pc"),
 -        .cachePath = SDL_GetPrefPath(NULL, "melee-pc"),
 +        .appName = getenv("MELEE_WINDOW_TITLE") ? getenv("MELEE_WINDOW_TITLE") : kMeleeAppId,
-+        .userPath = SDL_GetPrefPath(NULL, kMeleeAppId),
-+        .cachePath = SDL_GetPrefPath(NULL, kMeleeAppId),
++        .userPath = kMeleeUserPath ? kMeleeUserPath : SDL_GetPrefPath(NULL, kMeleeAppId),
++        .cachePath = kMeleeCachePath ? kMeleeCachePath : SDL_GetPrefPath(NULL, kMeleeAppId),
 +#if defined(__SWITCH__)
 +        /* No window manager on Switch; aurora's window.cpp only forces
 +         * SDL_WINDOW_FULLSCREEN for TARGET_OS_IOS/TV unless this is set. */
@@ -41,3 +102,60 @@
          .msaa = 1,
          .maxTextureAnisotropy = 16,
          /* MELEE_VSYNC=0 picks Mailbox/Immediate instead of FifoRelaxed; some
+diff --git a/src/pc/os.c b/src/pc/os.c
+index 55cc86c..795cf05 100644
+--- a/src/pc/os.c
++++ b/src/pc/os.c
+@@ -344,9 +344,41 @@ void pc_platform_init(void) {
+ #include <android/log.h>
+ #endif
+ 
++#if defined(__SWITCH__)
++/* stdout/stderr are per-_reent (per-thread) FILE* on this newlib/libnx target
++ * (each thread's __getreent() gets its OWN copy, inherited by pointer-value
++ * from whichever thread created it -- confirmed via libnx's threadCreate()
++ * source). melee's worker threads (e.g. pc_file_cache_start_prewarm's
++ * background thread, src/pc/file_cache.cpp) call OSReport() concurrently with
++ * the main thread, and hardware testing showed this hitting a null devoptab
++ * entry inside newlib's _write_r/_lseek_r the first time a background thread
++ * touched stdout post-boot (Data Abort, address 0). Route OSReport/OSPanic
++ * through one explicitly-opened, mutex-serialized FILE* instead of stdout/
++ * stderr, so every thread always shares the exact same fd/devoptab state and
++ * writes never interleave. */
++#include <pthread.h>
++
++static pthread_mutex_t s_switch_log_mutex = PTHREAD_MUTEX_INITIALIZER;
++static FILE* s_switch_log_file;
++
++static void switch_log_vwrite(const char* msg, va_list list) {
++    pthread_mutex_lock(&s_switch_log_mutex);
++    if (!s_switch_log_file) {
++        s_switch_log_file = fopen("sdmc:/switch/melee-nx/melee-nx-runtime.log", "a");
++    }
++    if (s_switch_log_file) {
++        vfprintf(s_switch_log_file, msg, list);
++        fflush(s_switch_log_file);
++    }
++    pthread_mutex_unlock(&s_switch_log_mutex);
++}
++#endif
++
+ void OSVReport(const char* msg, va_list list) {
+ #if defined(__ANDROID__)
+     __android_log_vprint(ANDROID_LOG_INFO, "OSReport", msg, list);
++#elif defined(__SWITCH__)
++    switch_log_vwrite(msg, list);
+ #else
+     vfprintf(stdout, msg, list);
+     fflush(stdout);
+@@ -367,6 +399,10 @@ void OSPanic(const char* file, int line, const char* msg, ...) {
+     char buf[1024];
+     vsnprintf(buf, sizeof(buf), msg, args);
+     __android_log_print(ANDROID_LOG_FATAL, "OSPanic", "PANIC %s:%d: %s", file, line, buf);
++#elif defined(__SWITCH__)
++    char buf[1024];
++    vsnprintf(buf, sizeof(buf), msg, args);
++    OSReport("PANIC %s:%d: %s\n", file, line, buf);
+ #else
+     fprintf(stderr, "PANIC %s:%d: ", file, line);
+     vfprintf(stderr, msg, args);

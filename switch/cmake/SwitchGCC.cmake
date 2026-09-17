@@ -46,8 +46,16 @@ foreach(_d IN LISTS _MELEE_CXXCFG_DIRS)
   endif()
 endforeach()
 
+# -fPIC: matches devkitPro's own Generic-dkP.cmake, which appends this to every
+# NintendoSwitch target's arch flags (confirmed by reading that Platform module
+# inside the container). Every NRO is a PIE, and a PIE's read-only segments may
+# not carry text relocations (-z text below enforces this) -- omitting -fPIC
+# produces "read-only segment has dynamic relocations" at final link, from any
+# object (ours or a static lib's) that was compiled position-dependent. This
+# also means Dawn (built via this same toolchain file, see build-graphics.sh)
+# needs a rebuild after this flag was added, not just melee itself.
 set(_MELEE_COMMON_FLAGS
-  "-march=armv8-a+crc+crypto -mtune=cortex-a57 -ffunction-sections -fdata-sections -D__SWITCH__ -D_GNU_SOURCE -D_DEFAULT_SOURCE -Wno-multichar")
+  "-march=armv8-a+crc+crypto -mtune=cortex-a57 -ffunction-sections -fdata-sections -D__SWITCH__ -D_GNU_SOURCE -D_DEFAULT_SOURCE -Wno-multichar -fPIC")
 
 # GCC C flags: big-endian struct support, Shift-JIS charset. melee-pc's disc-pointer
 # scheme (src/pc/disc.h) already tolerates MEM1 living above 4GB via an ext-pointer
@@ -64,3 +72,52 @@ set(CMAKE_CXX_FLAGS
 set(CMAKE_ASM_FLAGS "-march=armv8-a+crc+crypto" CACHE STRING "" FORCE)
 
 string(APPEND CMAKE_EXE_LINKER_FLAGS_INIT " -stdlib=libstdc++")
+
+# Clang's BareMetal driver hardcodes "-lstdc++ -lsupc++ -lunwind -lc -lm -lgcc"
+# for every C++ link on this target, ignoring -specs=/--rtlib=/--unwindlib=
+# entirely (confirmed with -v: none of those flags change the generated link
+# line). -lgcc resolves once its directory is on the search path; -lunwind
+# does not, because devkitA64 has no libunwind.a at all -- its unwinder
+# (_Unwind_Resume et al.) is bundled directly into libgcc.a instead. An empty
+# stub archive satisfies the linker's "-lunwind" lookup without providing
+# anything, and the real symbols are then found in -lgcc right after it.
+#
+# -fPIC here matches how it's actually compiled (see _MELEE_COMMON_FLAGS):
+# devkitA64 GCC keeps a second, position-independent multilib set for every
+# archive under aarch64-none-elf/lib/pic and lib/gcc/.../pic (libgcc.a,
+# crti.o, crtbegin.o, libstdc++.a, libsupc++.a, libpthread.a, libsysbase.a,
+# libc.a, ...) alongside the default non-PIC ones at the plain lib/ paths.
+# Linking melee's PIE against the non-PIC set is what actually produced
+# "read-only segment has dynamic relocations" -- confirmed in-container by
+# linking a trivial PIE both ways.
+execute_process(
+  COMMAND "${MELEE_GCC}" -march=armv8-a+crc+crypto -fPIC -print-libgcc-file-name
+  OUTPUT_VARIABLE _MELEE_LIBGCC_PATH OUTPUT_STRIP_TRAILING_WHITESPACE)
+get_filename_component(_MELEE_LIBGCC_DIR "${_MELEE_LIBGCC_PATH}" DIRECTORY)
+set(_MELEE_LIBCXX_PIC_DIR "${DEVKITPRO}/devkitA64/aarch64-none-elf/lib/pic")
+
+set(_MELEE_UNWIND_STUB_DIR "${CMAKE_BINARY_DIR}/switch-stubs")
+file(MAKE_DIRECTORY "${_MELEE_UNWIND_STUB_DIR}")
+if(NOT EXISTS "${_MELEE_UNWIND_STUB_DIR}/libunwind.a")
+  find_program(MELEE_AR NAMES aarch64-none-elf-ar REQUIRED
+    PATHS "${DEVKITPRO}/devkitA64/bin" NO_DEFAULT_PATH)
+  execute_process(COMMAND "${MELEE_AR}" rcs libunwind.a
+    WORKING_DIRECTORY "${_MELEE_UNWIND_STUB_DIR}")
+endif()
+
+# Exposed for switch/CMakeLists.txt's melee target (a target_link_options
+# -L there is reliable across reconfigures; CMAKE_EXE_LINKER_FLAGS_INIT is
+# not -- it only seeds CMAKE_EXE_LINKER_FLAGS on a build directory's very
+# first configure, and this one has been reconfigured many times already).
+set(MELEE_LIBGCC_DIR "${_MELEE_LIBGCC_DIR}" CACHE PATH "" FORCE)
+set(MELEE_UNWIND_STUB_DIR "${_MELEE_UNWIND_STUB_DIR}" CACHE PATH "" FORCE)
+set(MELEE_LIBCXX_PIC_DIR "${_MELEE_LIBCXX_PIC_DIR}" CACHE PATH "" FORCE)
+
+# NOTE: the CMAKE_CXX_STANDARD_LIBRARIES override for melee's runtime-library
+# relink group lives in switch/CMakeLists.txt, not here. devkitPro's own
+# Platform/Generic-dkP.cmake force-sets that same variable (to "-lnx -lm")
+# from inside its NintendoSwitch.cmake Platform module, which CMake loads
+# during enable_language() -- i.e. during project() in switch/CMakeLists.txt,
+# which runs AFTER this toolchain file. Setting it here just gets silently
+# overwritten a moment later; see that file's comment for where it actually
+# has to happen.

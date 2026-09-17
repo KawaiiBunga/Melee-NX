@@ -1,0 +1,23 @@
+--- a/public/common/TracySystem.cpp
++++ b/public/common/TracySystem.cpp
+@@ -93,8 +93,11 @@
+ #elif defined __QNX__
+     return (uint32_t) gettid();
+ #elif defined __EMSCRIPTEN__
+     // Not supported, but let it compile.
+     return 0;
++#elif defined __SWITCH__
++    // TRACY_ENABLE is off for melee-nx; this value is never actually used.
++    return 0;
+ #else
+     // To add support for a platform, retrieve and return the kernel thread identifier here.
+     //
+@@ -354,6 +357,8 @@
+     const auto user = getlogin();
+     if( user ) return user;
+     return "(?)";
++#elif defined __SWITCH__
++    return "(?)";
+ #else
+     static char user[1024] = {};
+     getlogin_r( user, sizeof( user ) );

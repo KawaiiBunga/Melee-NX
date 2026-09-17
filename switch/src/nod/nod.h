@@ -13,7 +13,7 @@
  * WIA/RVZ compression.
  *
  * Struct field names/order and function signatures here match exactly what
- * ref/melee-pc's src/pc/*.c(pp) and extern/aurora's lib/dolphin/dvd/*.cpp
+ * ref/melee-pc's src/pc sources and extern/aurora's lib/dolphin/dvd sources
  * reference (reverse-engineered from those call sites, not from upstream
  * nod's own headers).
  */
@@ -71,7 +71,7 @@ typedef struct NodDiscHeader {
 } NodDiscHeader;
 
 typedef struct NodRawSlice {
-    const void* data;
+    const uint8_t* data; /* DVDGetDOLLocation returns this straight through as const u8* */
     size_t size;
 } NodRawSlice;
 

@@ -52,6 +52,8 @@ prepare() {
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-surface.patch"
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-dawn-backends.patch"
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-status-compat.patch"
+  apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-no-backtrace.patch"
+  apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-no-mmap.patch"
 }
 
 build_dawn() {

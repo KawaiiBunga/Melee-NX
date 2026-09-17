@@ -51,14 +51,20 @@ do_patch() {
 do_configure() {
   require_file "$repo/build/dawn-switch/src/dawn/native/libwebgpu_dawn.a"
   require_file "$repo/build/sdl-switch/libSDL3.a"
+  # Mesa/NVK is Switch's only real Vulkan implementation (devkitPro's own
+  # switch-mesa package is EGL/GLES-only) and needs its own Rust-enabled cross
+  # build -- see docs/DEPS.md. Defaults to the path this repo's docker run
+  # invocations bind-mount a prebuilt tree at; override for a different layout.
+  : "${MESA_NVK_ROOT:=/mesa-nvk}"
   cmake -S "$repo/switch" -B "$build_dir" -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE="$repo/switch/cmake/SwitchGCC.cmake" \
     -DCMAKE_BUILD_TYPE=Release \
-    "-DCMAKE_EXE_LINKER_FLAGS=-L$DEVKITPRO/libnx/lib -L$DEVKITPRO/portlibs/switch/lib -specs=$DEVKITPRO/libnx/switch.specs -Wl,--wrap=pthread_create -Wl,--wrap=exit" \
+    "-DCMAKE_EXE_LINKER_FLAGS=-Wl,--wrap=pthread_create -Wl,--wrap=exit" \
     -DMELEE_DAWN_SOURCE="$repo/ref/dawn" \
     -DMELEE_DAWN_BUILD="$repo/build/dawn-switch" \
     -DMELEE_SDL_SOURCE="$repo/ref/SDL" \
-    -DMELEE_SDL_BUILD="$repo/build/sdl-switch"
+    -DMELEE_SDL_BUILD="$repo/build/sdl-switch" \
+    -DMESA_NVK_ROOT="$MESA_NVK_ROOT"
 }
 
 do_build() {
