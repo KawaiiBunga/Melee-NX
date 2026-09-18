@@ -285,7 +285,30 @@ callers. `_Unwind_Backtrace` from inside the wrap gives the real chain, using th
 `.eh_frame` data the throw is about to use. That is what named
 `std::thread::detach` → `pc_file_cache_start_prewarm`.
 
-### What is still unoptimised
-Bring-up traded speed for diagnosability and some of those trades are still in the tree —
-notably an `fsync` per log line. See [HANDOFF-PERF-AUDIO.md](HANDOFF-PERF-AUDIO.md),
-which is the entry point for performance and audio work.
+### Performance optimizations and port menu (2026-09-18)
+
+Following the initial hardware boot, five major performance and diagnostic milestones were achieved:
+
+1. **SD Card Logging Decoupling:**
+   - Synchronous `fsync` on every `OSReport` and Aurora log line was eliminated. Writes are now buffered in memory and flushed periodically (1 Hz / 64 lines) or on fatal abort/panic (`OSPanic`, `melee_terminate_handler`). This prevents SD card serialization on the main render thread.
+
+2. **Native Horizon SQLite VFS (`"hos"`):**
+   - SQLite DB initialization failures in Dawn and Aurora pipeline caches (`unable to open database file`) were resolved by integrating a custom libnx-native VFS (`switch/src/sqlite_vfs.cpp`).
+   - SQLite is compiled with `SQLITE_OS_OTHER=1` and `SQLITE_OMIT_WAL`, using `fsFs*` calls directly with atomic file replaces and custom lock tracking.
+   - Pipeline caches now persist compiled shader variants on SD card across boots, directly eliminating in-game shader compilation stutter.
+
+3. **RomFS Port Menu & Lightweight Profiler:**
+   - All RmlUi UI assets (`resources/`) are packed directly into the NRO's RomFS partition via `switch/CMakeLists.txt` (`ROMFS "${MELEE_PC_ROOT}/resources"`). `launcher.cpp` loads from `romfs:/resources/`.
+   - Settings persistence bug fixed: `save_preferences` writes directly using POSIX `O_TRUNC` to prevent FAT32 rename errors on Horizon.
+   - Controller chord **`- + R3`** (Minus/Select + Right Stick Click) opens the in-game port menu on console.
+   - Built-in lightweight profiler tracks real-time microsecond metrics:
+     - `Sim`: Melee GameCube simulation and GX display list generation.
+     - `Submit`: WebGPU/Aurora command submission.
+     - `Wait`: Swapchain acquisition and VSync synchronization.
+   - Profiler is visible live inside the Port Menu and toggleable as an on-screen HUD (`fps=0` Off, `fps=1` FPS, `fps=2` Full Breakdown).
+
+4. **Audio Latency Tuning:**
+   - Hardware audio device sample frame count set to 512 (`SDL_AUDIO_DEVICE_SAMPLE_FRAMES=512`), cutting audout queue latency by half (from 21.3ms down to 10.6ms).
+
+5. **Input Polling Relaxation:**
+   - Relaxed input poll loop (`src/pc/input_poll.c`) on Switch from 1000 Hz spin to 250 Hz (`SDL_DelayNS(4ms)`), freeing CPU cycles on Cortex-A57 cores.

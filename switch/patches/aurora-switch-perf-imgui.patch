@@ -1,0 +1,101 @@
+﻿diff --git a/extern/aurora/lib/aurora.cpp b/extern/aurora/lib/aurora.cpp
+index 0e1819e..04b4772 100644
+--- a/extern/aurora/lib/aurora.cpp
++++ b/extern/aurora/lib/aurora.cpp
+@@ -357,26 +357,11 @@ void end_frame() noexcept {
+           pass.SetBindGroup(0, rmlBindGroup, 0, nullptr);
+           pass.Draw(3);
+         }
+-        pass.End();
+-      }
+-      {
+-        const std::array attachments{
+-            wgpu::RenderPassColorAttachment{
+-                .view = currentView,
+-                .loadOp = wgpu::LoadOp::Load,
+-                .storeOp = wgpu::StoreOp::Store,
+-            },
+-        };
+-        const wgpu::RenderPassDescriptor renderPassDescriptor{
+-            .label = "ImGui render pass",
+-            .colorAttachmentCount = attachments.size(),
+-            .colorAttachments = attachments.data(),
+-            .timestampWrites = webgpu::gpu_prof::pass_writes("ImGui"),
+-        };
+-        const auto pass = encoder.BeginRenderPass(&renderPassDescriptor);
+-        pass.SetViewport(0.f, 0.f, static_cast<float>(webgpu::g_graphicsConfig.surfaceConfiguration.width),
+-                         static_cast<float>(webgpu::g_graphicsConfig.surfaceConfiguration.height), 0.f, 1.f);
+-        imgui::render(pass, imguiDrawData);
++        if (imgui::has_draw_commands(imguiDrawData)) {
++          pass.SetViewport(0.f, 0.f, static_cast<float>(webgpu::g_graphicsConfig.surfaceConfiguration.width),
++                           static_cast<float>(webgpu::g_graphicsConfig.surfaceConfiguration.height), 0.f, 1.f);
++          imgui::render(pass, imguiDrawData);
++        }
+         pass.End();
+       }
+     } else {
+diff --git a/extern/aurora/lib/gx/pipeline.cpp b/extern/aurora/lib/gx/pipeline.cpp
+index 6b2acfe..19d1f3c 100644
+--- a/extern/aurora/lib/gx/pipeline.cpp
++++ b/extern/aurora/lib/gx/pipeline.cpp
+@@ -56,6 +56,7 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
+     return;
+   }
+ 
++#if !defined(__SWITCH__)
+   // AURORA_ONLY_UNTEX_VTX=<n>: render ONLY untextured draws with n vertices
+   // and drop everything else, so the offending geometry can be seen in
+   // isolation on a black frame. Suppressing a draw proves it is responsible;
+@@ -102,6 +103,7 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
+       return;
+     }
+   }
++#endif
+ 
+   const auto& resources = gfx::detail::resources();
+   pass.SetImmediates(0, &data.immediateData, sizeof(data.immediateData));
+@@ -110,7 +112,9 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
+   if (data.bindGroups.textureBindGroup) {
+     pass.SetBindGroup(2, gfx::find_bind_group(data.bindGroups.textureBindGroup));
+   }
+-  pass.SetIndexBuffer(resources.indexBuffer, wgpu::IndexFormat::Uint16, data.idxRange.offset, data.idxRange.size);
++  if (data.indexCount != 0) {
++    pass.SetIndexBuffer(resources.indexBuffer, wgpu::IndexFormat::Uint16, data.idxRange.offset, data.idxRange.size);
++  }
+   if (data.dstAlpha != UINT32_MAX) {
+     const wgpu::Color color{0.f, 0.f, 0.f, data.dstAlpha / 255.f};
+     pass.SetBlendConstant(&color);
+diff --git a/extern/aurora/lib/imgui.cpp b/extern/aurora/lib/imgui.cpp
+index 494640b..bc6e1d4 100644
+--- a/extern/aurora/lib/imgui.cpp
++++ b/extern/aurora/lib/imgui.cpp
+@@ -220,6 +220,10 @@ DrawData freeze() noexcept {
+   return DrawData{std::move(frozen)};
+ }
+ 
++bool has_draw_commands(const DrawData& drawData) noexcept {
++  return drawData.m_impl != nullptr && drawData.m_impl->drawData.CmdListsCount > 0;
++}
++
+ void render(const wgpu::RenderPassEncoder& pass, const DrawData& drawData) noexcept {
+   ZoneScoped;
+ 
+diff --git a/extern/aurora/lib/imgui.hpp b/extern/aurora/lib/imgui.hpp
+index a11a7f8..03034dd 100644
+--- a/extern/aurora/lib/imgui.hpp
++++ b/extern/aurora/lib/imgui.hpp
+@@ -25,6 +25,7 @@ private:
+ 
+   friend DrawData freeze() noexcept;
+   friend void render(const wgpu::RenderPassEncoder& pass, const DrawData& drawData) noexcept;
++  friend bool has_draw_commands(const DrawData& drawData) noexcept;
+ };
+ 
+ void create_context() noexcept;
+@@ -35,5 +36,6 @@ void process_event(const SDL_Event& event) noexcept;
+ bool wants_capture_event(const SDL_Event& event) noexcept;
+ void new_frame(const AuroraWindowSize& size) noexcept;
+ DrawData freeze() noexcept;
++bool has_draw_commands(const DrawData& drawData) noexcept;
+ void render(const wgpu::RenderPassEncoder& pass, const DrawData& drawData) noexcept;
+ } // namespace aurora::imgui

@@ -55,7 +55,7 @@ endforeach()
 # also means Dawn (built via this same toolchain file, see build-graphics.sh)
 # needs a rebuild after this flag was added, not just melee itself.
 set(_MELEE_COMMON_FLAGS
-  "-march=armv8-a+crc+crypto -mtune=cortex-a57 -ffunction-sections -fdata-sections -D__SWITCH__ -D_GNU_SOURCE -D_DEFAULT_SOURCE -Wno-multichar -fPIC")
+  "-mcpu=cortex-a57+crc+crypto -ffunction-sections -fdata-sections -D__SWITCH__ -D_GNU_SOURCE -D_DEFAULT_SOURCE -Wno-multichar -fPIC")
 
 # GCC C flags: big-endian struct support, Shift-JIS charset. melee-pc's disc-pointer
 # scheme (src/pc/disc.h) already tolerates MEM1 living above 4GB via an ext-pointer
@@ -63,13 +63,15 @@ set(_MELEE_COMMON_FLAGS
 set(CMAKE_C_FLAGS
   "${_MELEE_COMMON_FLAGS} -fexec-charset=CP932 -fno-strict-aliasing -fwrapv -ffp-contract=off"
   CACHE STRING "" FORCE)
+set(CMAKE_C_FLAGS_RELEASE "-O3 -DNDEBUG" CACHE STRING "" FORCE)
 
 # Clang C++ flags: stdlib + gcc-toolchain so it finds libstdc++ ABI headers.
 set(CMAKE_CXX_FLAGS
   "-stdlib=libstdc++ --gcc-toolchain=${DEVKITPRO}/devkitA64 ${_MELEE_COMMON_FLAGS} -ftls-model=local-exec${_MELEE_CXX_MULTILIB_INC}"
   CACHE STRING "" FORCE)
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG" CACHE STRING "" FORCE)
 
-set(CMAKE_ASM_FLAGS "-march=armv8-a+crc+crypto" CACHE STRING "" FORCE)
+set(CMAKE_ASM_FLAGS "-mcpu=cortex-a57+crc+crypto" CACHE STRING "" FORCE)
 
 string(APPEND CMAKE_EXE_LINKER_FLAGS_INIT " -stdlib=libstdc++")
 

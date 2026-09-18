@@ -115,17 +115,28 @@ endif()
 
 if(TARGET sqlite3)
   # The amalgamation's unix VFS backend includes <sys/mman.h> whenever WAL or
-  # mmap I/O is enabled; devkitA64/newlib has no mmap at all. We already want
-  # journal_mode=MEMORY for the FAT32 SD card shader cache (see
-  # docs/PORTING-NOTES.md §4), so WAL was never going to be used anyway --
-  # disabling both compiles out the include instead of stubbing mmap().
-  target_compile_definitions(sqlite3 PRIVATE
-    SQLITE_OMIT_WAL SQLITE_MAX_MMAP_SIZE=0
-    SQLITE_OMIT_LOAD_EXTENSION) # dlopen()/<dlfcn.h> don't exist on libnx
-  include("${MELEE_AURORA_SOURCE}/cmake/AuroraSwitchSQLite.cmake" OPTIONAL)
-  if(COMMAND aurora_configure_switch_sqlite)
-    aurora_configure_switch_sqlite(sqlite3)
+  # mmap I/O is enabled; devkitA64/newlib has no mmap at all.
+  # OS_OTHER otherwise selects noop mutexes even when pthreads were explicitly
+  # requested. Keep SQLite's real pthread mutex implementation on libnx.
+  get_target_property(_sqlite_sources sqlite3 SOURCES)
+  list(GET _sqlite_sources 0 _sqlite_source)
+  if(EXISTS "${_sqlite_source}")
+    file(READ "${_sqlite_source}" _sqlite_content)
+    string(FIND "${_sqlite_content}" "#if SQLITE_THREADSAFE && !defined(SQLITE_MUTEX_NOOP) && !defined(SQLITE_MUTEX_PTHREADS)" _sqlite_already)
+    if(_sqlite_already EQUAL -1)
+      string(REPLACE
+        "#if SQLITE_THREADSAFE && !defined(SQLITE_MUTEX_NOOP)"
+        "#if SQLITE_THREADSAFE && !defined(SQLITE_MUTEX_NOOP) && !defined(SQLITE_MUTEX_PTHREADS)"
+        _sqlite_content "${_sqlite_content}")
+      file(WRITE "${_sqlite_source}" "${_sqlite_content}")
+    endif()
   endif()
+  target_compile_definitions(sqlite3 PRIVATE
+    SQLITE_OS_OTHER=1 SQLITE_MUTEX_PTHREADS
+    SQLITE_OMIT_WAL SQLITE_MAX_MMAP_SIZE=0
+    SQLITE_OMIT_LOAD_EXTENSION SQLITE_TEMP_STORE=3)
+  target_sources(sqlite3 PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../src/sqlite_vfs.cpp")
+  target_compile_features(sqlite3 PRIVATE cxx_std_17)
 endif()
 
 # ── Vulkan driver (Mesa NVK) ─────────────────────────────────────────────────

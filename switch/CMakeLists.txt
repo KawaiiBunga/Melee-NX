@@ -124,12 +124,14 @@ list(REMOVE_ITEM PC_SOURCES "${MELEE_PC_ROOT}/src/pc/updater.cpp")
 file(GLOB SWITCH_SOURCES CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_LIST_DIR}/src/*.c"
   "${CMAKE_CURRENT_LIST_DIR}/src/*.cpp")
+# sqlite_vfs.cpp is compiled directly into the sqlite3 target by Graphics.cmake
+list(REMOVE_ITEM SWITCH_SOURCES "${CMAKE_CURRENT_LIST_DIR}/src/sqlite_vfs.cpp")
 file(GLOB GAME_DATA_SOURCES CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_LIST_DIR}/src/game_data/*.cpp")
 list(APPEND SWITCH_SOURCES ${GAME_DATA_SOURCES})
 
 add_executable(melee ${PC_SOURCES} ${SWITCH_SOURCES})
-target_compile_options(melee PRIVATE -march=armv8-a+crc+crypto -mtune=cortex-a57)
+target_compile_options(melee PRIVATE -mcpu=cortex-a57+crc+crypto)
 target_include_directories(melee PRIVATE "${CMAKE_CURRENT_LIST_DIR}/src/game_data")
 target_link_libraries(melee PRIVATE melee_game aurora::main ${MELEE_CRYPTO_LIBS} ${MELEE_NETWORK_LIBS})
 # Rust-vs-newlib ABI bridge (mmap/getauxval/__errno_location/sysconf/execvp/
@@ -234,4 +236,5 @@ nx_generate_nacp(melee.nacp
   AUTHOR "melee-nx"
   VERSION "0.1.0")
 nx_create_nro(melee
-  NACP melee.nacp)
+  NACP melee.nacp
+  ROMFS "${MELEE_PC_ROOT}/resources")

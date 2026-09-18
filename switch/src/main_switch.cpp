@@ -397,6 +397,8 @@ extern "C" int main(int argc, char** argv) {
     // exactly where the extracted loose-file cache lives, rather than relying
     // on the NRO's current working directory matching its own folder.
     setenv("MELEE_FILES_DIR", melee_nx::kFilesDir, 1);
+    // Audio buffer: 1024 sample frames paired with 4 audout buffers ensures continuous, glitch-free output.
+    setenv("SDL_AUDIO_DEVICE_SAMPLE_FRAMES", "1024", 1);
     set_file_cache_budget();
     melee_boot_trace("08 cache-budget  MELEE_CACHE_MAX_MB=%s",
                getenv("MELEE_CACHE_MAX_MB") ? getenv("MELEE_CACHE_MAX_MB") : "<unset>");
