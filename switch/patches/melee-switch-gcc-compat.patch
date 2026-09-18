@@ -1,31 +1,94 @@
+diff --git a/src/pc/file_cache.cpp b/src/pc/file_cache.cpp
+index e4d79ec..a108eef 100644
+--- a/src/pc/file_cache.cpp
++++ b/src/pc/file_cache.cpp
+@@ -25,6 +25,8 @@
+ #include <dolphin/dvd.h>
+ #include <dolphin/os.h>
+ 
++#include "switch_io_lock.h"
++
+ namespace {
+ 
+ struct CachedEntry {
+@@ -188,6 +190,7 @@ bool preload_single_file(const char* name, int entryNum) {
+     // 1. Check if loose file exists
+     std::string loose_path = resolve_loose_path(key.c_str());
+     if (!loose_path.empty()) {
++        SWITCH_IO_LOCK();
+         struct stat st;
+         if (stat(loose_path.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
+             std::ifstream in(loose_path, std::ios::binary);
+@@ -312,6 +315,7 @@ bool pc_file_cache_get(const char* filename, void* dst, size_t* size) {
+     // Check loose file directory override
+     std::string loose_path = resolve_loose_path(key.c_str());
+     if (!loose_path.empty()) {
++        SWITCH_IO_LOCK();
+         struct stat st;
+         if (stat(loose_path.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
+             std::ifstream in(loose_path, std::ios::binary);
+@@ -353,6 +357,7 @@ bool pc_file_cache_get_size(const char* filename, size_t* size) {
+ 
+     std::string loose_path = resolve_loose_path(key.c_str());
+     if (!loose_path.empty()) {
++        SWITCH_IO_LOCK();
+         struct stat st;
+         if (stat(loose_path.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
+             *size = static_cast<size_t>(st.st_size);
 diff --git a/src/pc/main.c b/src/pc/main.c
-index 0954e60..e82d374 100644
+index 0954e60..ce9b2b3 100644
 --- a/src/pc/main.c
 +++ b/src/pc/main.c
-@@ -78,9 +78,45 @@ void pc_log_line(const char* fmt, ...) {
+@@ -78,9 +78,70 @@ void pc_log_line(const char* fmt, ...) {
      }
  }
  
 +#if defined(__SWITCH__)
-+/* stdout/stderr are per-_reent (per-thread) FILE* on this newlib/libnx target,
-+ * each thread getting its own copy inherited by pointer-value at thread-
-+ * creation time. aurora/Dawn run plenty of their own worker threads (shader
-+ * compilation, adapter/device enumeration), and hardware testing showed a
-+ * background thread's first stdout write after boot hitting a null devoptab
-+ * entry inside newlib (Data Abort, address 0) -- the same failure this fixed
-+ * for melee's own OSReport() (see os.c's switch_log_vwrite). Route Aurora's
-+ * log sink through the same kind of dedicated, mutex-serialized FILE* instead
-+ * of stdout/stderr so it can't hit the same bug from a Dawn worker thread. */
++/* Every Switch log sink has to share ONE file offset.
++ *
++ * This sink used to own a private fopen("sdmc:/switch/melee-nx/melee-nx-runtime.log",
++ * "a"), and so did os.c's switch_log_vwrite(), while main_switch.cpp's
++ * redirect_stdio_to_sd() dup2()'d a third descriptor for the same path onto
++ * fd 1/2. Three handles, three independent file offsets, all appending: they
++ * overwrote each other, and the file ended up truncated to whatever the last
++ * handle to write had reached. Hardware-confirmed 2026-09-17 -- a run that
++ * demonstrably got into melee_main() (gmMain's file-cache prewarm was on the
++ * main thread's stack, and aurora's gfx render/pipeline workers were running,
++ * which only start once webgpu::initialize() has succeeded) left a 331-byte
++ * log that stopped at aurora's sixth line. Everything after that was lost,
++ * which is exactly the part worth reading.
++ *
++ * Write to fd 1 instead. redirect_stdio_to_sd() rebinds the RAW descriptor, so
++ * fd 1 is process-wide: one offset shared by every sink on every thread, and
++ * no per-_reent FILE* that could hit a stale devoptab from a Dawn worker (the
++ * original reason this sink avoided stdout -- see main_switch.cpp for why the
++ * fd-level redirect fixes that for good). write() also holds no newlib buffer,
++ * so a line has reached the SD card before the next one is formatted. */
 +#include <pthread.h>
++#include <unistd.h>
 +
 +static pthread_mutex_t s_switch_log_mutex = PTHREAD_MUTEX_INITIALIZER;
-+static FILE* s_switch_log_file;
 +
-+static FILE* switch_log_file_locked(void) {
-+    if (!s_switch_log_file) {
-+        s_switch_log_file = fopen("sdmc:/switch/melee-nx/melee-nx-runtime.log", "a");
++/* Serialized so two threads' lines never interleave mid-line. */
++static void switch_log_write(const char* buf, size_t len) {
++    pthread_mutex_lock(&s_switch_log_mutex);
++    while (len > 0) {
++        const ssize_t n = write(STDOUT_FILENO, buf, len);
++        if (n <= 0) {
++            break;
++        }
++        buf += n;
++        len -= (size_t)n;
 +    }
-+    return s_switch_log_file;
++    /* Commit to the SD card, not just to Horizon's FS cache. newlib's write()
++       reaches fsdev, which calls fsFileWrite with FsWriteOption_None; without
++       an fsFileFlush the bytes are dropped if the process dies before the file
++       is closed, which is exactly how both hardware runs on 2026-09-17 lost
++       every line after boot's first few. A bring-up trade: one SD commit per
++       log line is slow, and can be relaxed to a periodic flush once the port
++       stops dying with the interesting part of the log still in flight. */
++    fsync(STDOUT_FILENO);
++    pthread_mutex_unlock(&s_switch_log_mutex);
 +}
 +#endif
 +
@@ -35,13 +98,12 @@ index 0954e60..e82d374 100644
 +#if defined(__SWITCH__)
 +    const double t = log_now_ms();
 +    static const char* const names[] = {"DEBUG", "INFO", "WARN", "ERROR", "FATAL"};
-+    pthread_mutex_lock(&s_switch_log_mutex);
-+    FILE* out = switch_log_file_locked();
-+    if (out) {
-+        fprintf(out, "[%9.3f] [%s] %s: %.*s\n", t, names[level], module, (int)len, message);
-+        fflush(out);
++    char line[1024];
++    const int n = snprintf(line, sizeof(line), "[%9.3f] [%s] %s: %.*s\n", t,
++        names[level], module, (int)len, message);
++    if (n > 0) {
++        switch_log_write(line, (size_t)n < sizeof(line) ? (size_t)n : sizeof(line) - 1);
 +    }
-+    pthread_mutex_unlock(&s_switch_log_mutex);
 +    if (level == LOG_FATAL) {
 +        abort();
 +    }
@@ -49,7 +111,7 @@ index 0954e60..e82d374 100644
      int prio = ANDROID_LOG_INFO;
      switch (level) {
      case LOG_DEBUG:
-@@ -275,7 +311,11 @@ static AuroraBackend backend_from_env(void) {
+@@ -275,7 +336,11 @@ static AuroraBackend backend_from_env(void) {
      return BACKEND_AUTO;
  }
  
@@ -61,7 +123,7 @@ index 0954e60..e82d374 100644
  #if defined(_WIN32)
      SetUnhandledExceptionFilter(crash_handler);
  #endif
-@@ -298,12 +338,37 @@ MELEE_EXPORT int main(int argc, char* argv[]) {
+@@ -298,12 +363,37 @@ MELEE_EXPORT int main(int argc, char* argv[]) {
              usage(argv[0]);
          }
      }
@@ -103,10 +165,30 @@ index 0954e60..e82d374 100644
          .maxTextureAnisotropy = 16,
          /* MELEE_VSYNC=0 picks Mailbox/Immediate instead of FifoRelaxed; some
 diff --git a/src/pc/os.c b/src/pc/os.c
-index 55cc86c..795cf05 100644
+index 55cc86c..3d38534 100644
 --- a/src/pc/os.c
 +++ b/src/pc/os.c
-@@ -344,9 +344,41 @@ void pc_platform_init(void) {
+@@ -322,6 +322,19 @@ void* pc_resolve_ext_ptr(uint32_t id) {
+     return s_ext_ptrs[id - 1];
+ }
+ 
++uintptr_t pc_mem1_hi;
++uint32_t pc_mem1_lo;
++uint32_t pc_mem1_len;
++
++/* Called once by AllocMEM1, before any disc file is parsed. See src/pc/disc.h
++ * for why Switch needs a window at all. */
++void pc_disc_set_mem1_window(const void* base, uint32_t size) {
++    const uintptr_t u = (uintptr_t)base;
++    pc_mem1_hi = u & ~(uintptr_t)0xFFFFFFFFu;
++    pc_mem1_lo = (uint32_t)u;
++    pc_mem1_len = size;
++}
++
+ void pc_disc_ptr_overflow(const void* p, const char* file, int line) {
+     fprintf(stderr, "%s:%d: pointer %p does not fit a 32-bit disc slot\n", file, line, p);
+     abort();
+@@ -344,9 +357,63 @@ void pc_platform_init(void) {
  #include <android/log.h>
  #endif
  
@@ -119,23 +201,45 @@ index 55cc86c..795cf05 100644
 + * the main thread, and hardware testing showed this hitting a null devoptab
 + * entry inside newlib's _write_r/_lseek_r the first time a background thread
 + * touched stdout post-boot (Data Abort, address 0). Route OSReport/OSPanic
-+ * through one explicitly-opened, mutex-serialized FILE* instead of stdout/
-+ * stderr, so every thread always shares the exact same fd/devoptab state and
-+ * writes never interleave. */
++ * through the RAW descriptor instead: main_switch.cpp's redirect_stdio_to_sd()
++ * rebinds fd 1 itself, which is process-wide, so every thread shares the exact
++ * same fd/devoptab state however its own stdout FILE* was initialized.
++ *
++ * This deliberately does NOT keep a private fopen() of the log path. main.c's
++ * aurora sink used to hold one too, which gave the file three independent
++ * append offsets (here, there, and redirect_stdio_to_sd's fd) that overwrote
++ * each other and silently truncated the log -- see main.c's switch_log_write()
++ * for the hardware evidence. One descriptor, one offset, one mutex. */
 +#include <pthread.h>
++#include <unistd.h>
 +
 +static pthread_mutex_t s_switch_log_mutex = PTHREAD_MUTEX_INITIALIZER;
-+static FILE* s_switch_log_file;
 +
 +static void switch_log_vwrite(const char* msg, va_list list) {
++    char line[1024];
++    const int formatted = vsnprintf(line, sizeof(line), msg, list);
++    if (formatted <= 0) {
++        return;
++    }
++    size_t len = (size_t)formatted < sizeof(line) ? (size_t)formatted : sizeof(line) - 1;
++    const char* buf = line;
 +    pthread_mutex_lock(&s_switch_log_mutex);
-+    if (!s_switch_log_file) {
-+        s_switch_log_file = fopen("sdmc:/switch/melee-nx/melee-nx-runtime.log", "a");
++    while (len > 0) {
++        const ssize_t n = write(STDOUT_FILENO, buf, len);
++        if (n <= 0) {
++            break;
++        }
++        buf += n;
++        len -= (size_t)n;
 +    }
-+    if (s_switch_log_file) {
-+        vfprintf(s_switch_log_file, msg, list);
-+        fflush(s_switch_log_file);
-+    }
++    /* Commit to the SD card, not just to Horizon's FS cache. newlib's write()
++       reaches fsdev, which calls fsFileWrite with FsWriteOption_None; without
++       an fsFileFlush the bytes are dropped if the process dies before the file
++       is closed, which is exactly how both hardware runs on 2026-09-17 lost
++       every line after boot's first few. A bring-up trade: one SD commit per
++       log line is slow, and can be relaxed to a periodic flush once the port
++       stops dying with the interesting part of the log still in flight. */
++    fsync(STDOUT_FILENO);
 +    pthread_mutex_unlock(&s_switch_log_mutex);
 +}
 +#endif
@@ -148,7 +252,7 @@ index 55cc86c..795cf05 100644
  #else
      vfprintf(stdout, msg, list);
      fflush(stdout);
-@@ -367,6 +399,10 @@ void OSPanic(const char* file, int line, const char* msg, ...) {
+@@ -367,6 +434,10 @@ void OSPanic(const char* file, int line, const char* msg, ...) {
      char buf[1024];
      vsnprintf(buf, sizeof(buf), msg, args);
      __android_log_print(ANDROID_LOG_FATAL, "OSPanic", "PANIC %s:%d: %s", file, line, buf);

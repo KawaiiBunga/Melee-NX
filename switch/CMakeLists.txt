@@ -81,7 +81,8 @@ add_library(melee_game STATIC ${GAME_SOURCES})
 target_include_directories(melee_game PUBLIC
   "${MELEE_PC_ROOT}/extern/aurora/include"
   "${MELEE_PC_ROOT}/src"
-  "${MELEE_PC_ROOT}/src/sdk_include")
+  "${MELEE_PC_ROOT}/src/sdk_include"
+  "${CMAKE_CURRENT_LIST_DIR}/src")
 target_compile_definitions(melee_game PUBLIC TARGET_PC=1 MELEE_PC=1 __SWITCH__=1)
 target_compile_options(melee_game PRIVATE
   -fpermissive

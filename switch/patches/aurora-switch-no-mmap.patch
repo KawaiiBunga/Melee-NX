@@ -1,5 +1,7 @@
---- a/lib/dolphin/dvd/dvd.cpp
-+++ b/lib/dolphin/dvd/dvd.cpp
+diff --git a/extern/aurora/lib/dolphin/dvd/dvd.cpp b/extern/aurora/lib/dolphin/dvd/dvd.cpp
+index 839f6d5..e9b42c4 100644
+--- a/extern/aurora/lib/dolphin/dvd/dvd.cpp
++++ b/extern/aurora/lib/dolphin/dvd/dvd.cpp
 @@ -11,7 +11,7 @@
  #define WIN32_LEAN_AND_MEAN
  #define NOMINMAX
@@ -9,7 +11,24 @@
  #include <fcntl.h>
  #include <sys/mman.h>
  #include <sys/stat.h>
-@@ -178,7 +178,7 @@
+@@ -24,6 +24,8 @@
+ #include <cstdint>
+ #include <cstring>
+ #include <deque>
++#include <functional>
++#include <future>
+ #include <limits>
+ #include <memory>
+ #include <mutex>
+@@ -35,6 +37,7 @@
+ #include "dvd.hpp"
+ 
+ #include "../../internal.hpp"
++#include "switch_io_lock.h"
+ 
+ using namespace aurora::dvd::impl;
+ 
+@@ -178,7 +181,7 @@ void mmapStreamClose(void* userData) {
    if (stream->fileHandle != INVALID_HANDLE_VALUE) {
      CloseHandle(stream->fileHandle);
    }
@@ -18,3 +37,145 @@
    if (stream->data != nullptr && stream->data != MAP_FAILED) {
      munmap(const_cast<uint8_t*>(stream->data), static_cast<size_t>(stream->size));
    }
+@@ -196,6 +199,7 @@ int64_t sdlStreamReadAt(void* userData, uint64_t offset, void* out, size_t len)
+     return -1;
+   }
+ 
++  SWITCH_IO_LOCK();
+   if (SDL_SeekIO(io, static_cast<Sint64>(offset), SDL_IO_SEEK_SET) < 0) {
+     return -1;
+   }
+@@ -218,6 +222,7 @@ int64_t sdlStreamLen(void* userData) {
+     return -1;
+   }
+ 
++  SWITCH_IO_LOCK();
+   const Sint64 size = SDL_GetIOSize(io);
+   return size < 0 ? -1 : static_cast<int64_t>(size);
+ }
+@@ -453,6 +458,28 @@ public:
+     m_doneCv.notify_all();
+   }
+ 
++  // Runs `fn` on the worker thread, blocking the caller until it completes.
++  // Switch-only: devkitA64/libnx's newlib stdio faults (Data Abort in
++  // _lseek_r/_read_r, devoptab_list[dev]==NULL) when a FILE/SDL_IOStream
++  // opened on one thread is later read from another -- hardware-confirmed via
++  // a crash inside sdlStreamReadAt on this worker's first read of a disc
++  // opened by the caller thread. Fix: open the disc (and therefore do every
++  // read, since they all land on this same worker thread) from here instead.
++  // Caller must have already called start().
++  void runSync(std::function<void()> fn) {
++    auto donePromise = std::make_shared<std::promise<void>>();
++    std::future<void> doneFuture = donePromise->get_future();
++    {
++      std::lock_guard lk{m_mutex};
++      m_syncTask = [fn = std::move(fn), donePromise]() {
++        fn();
++        donePromise->set_value();
++      };
++    }
++    m_cv.notify_one();
++    doneFuture.wait();
++  }
++
+   void enqueue(DVDCommandBlock* block) {
+     bool executeNow = false;
+     {
+@@ -564,10 +591,18 @@ private:
+ 
+     std::unique_lock lk{m_mutex};
+     while (true) {
+-      m_cv.wait(lk, [&] { return m_shutdown || !m_queue.empty(); });
++      m_cv.wait(lk, [&] { return m_shutdown || !m_queue.empty() || m_syncTask != nullptr; });
+       if (m_shutdown) {
+         return;
+       }
++      if (m_syncTask != nullptr) {
++        std::function<void()> task = std::move(m_syncTask);
++        m_syncTask = nullptr;
++        lk.unlock();
++        task();
++        lk.lock();
++        continue;
++      }
+       DVDCommandBlock* block = m_queue.front();
+       m_queue.pop_front();
+       m_activeBlock = block;
+@@ -667,6 +702,7 @@ private:
+   std::mutex m_mutex;
+   std::condition_variable m_cv;
+   std::condition_variable m_doneCv;
++  std::function<void()> m_syncTask;
+   std::deque<DVDCommandBlock*> m_queue;
+   DVDCommandBlock* m_activeBlock = nullptr;
+   DVDCommandBlock* m_cancelActiveBlock = nullptr;
+@@ -711,16 +747,7 @@ void cbForPrepareStreamAsync(s32 result, DVDCommandBlock* block) {
+ 
+ } // namespace
+ 
+-extern "C" {
+-
+-bool aurora_dvd_open(const char* disc_path) {
+-  if (disc_path == nullptr) {
+-    return false;
+-  }
+-
+-  s_worker.stop();
+-  clearState();
+-
++static bool openDiscBody(const char* disc_path) {
+   NodDiscStream stream{};
+   bool streamReady = false;
+ 
+@@ -789,7 +816,11 @@ bool aurora_dvd_open(const char* disc_path) {
+ #endif
+ 
+   if (!streamReady) {
+-    SDL_IOStream* io = SDL_IOFromFile(disc_path, "rb");
++    SDL_IOStream* io;
++    {
++      SWITCH_IO_LOCK();
++      io = SDL_IOFromFile(disc_path, "rb");
++    }
+     if (io == nullptr) {
+       return false;
+     }
+@@ -844,8 +875,37 @@ bool aurora_dvd_open(const char* disc_path) {
+   s_currentDir = 0;
+   s_currentPath = "/";
+   s_initialized = true;
++  return true;
++}
++
++extern "C" {
++
++bool aurora_dvd_open(const char* disc_path) {
++  if (disc_path == nullptr) {
++    return false;
++  }
++
++  s_worker.stop();
++  clearState();
++
++#if defined(__SWITCH__)
++  // See DvdWorker::runSync's comment: the open must happen on the same
++  // thread that will service all subsequent reads.
+   s_worker.start();
++  bool opened = false;
++  s_worker.runSync([&] { opened = openDiscBody(disc_path); });
++  if (!opened) {
++    s_worker.stop();
++    return false;
++  }
+   return true;
++#else
++  if (!openDiscBody(disc_path)) {
++    return false;
++  }
++  s_worker.start();
++  return true;
++#endif
+ }
+ 
+ void aurora_dvd_close(void) {

@@ -1,0 +1,63 @@
+diff --git a/extern/aurora/lib/gfx/pipeline_cache.cpp b/extern/aurora/lib/gfx/pipeline_cache.cpp
+index 7f5b3e2..db0b749 100644
+--- a/extern/aurora/lib/gfx/pipeline_cache.cpp
++++ b/extern/aurora/lib/gfx/pipeline_cache.cpp
+@@ -10,6 +10,7 @@
+ #endif
+ #include "../sqlite_utils.hpp"
+ #include "../webgpu/gpu.hpp"
++#include "switch_io_lock.h"
+ 
+ #include <algorithm>
+ #include <atomic>
+@@ -946,6 +947,10 @@ static void pipeline_cache_writer() {
+ 
+     bool writeFailed = false;
+     {
++      // See load_pipeline_cache's SWITCH_IO_LOCK comment: this thread's sqlite
++      // writes need the same guard against DvdWorker's/file_cache's sdmc:
++      // reads on their own threads.
++      SWITCH_IO_LOCK();
+       sqlite::Transaction tx(g_pipelineCacheDb, Log, true);
+       if (!tx) {
+         Log.error("Failed to begin pipeline cache write transaction");
+@@ -962,10 +967,13 @@ static void pipeline_cache_writer() {
+           tx.commit();
+         }
+       }
++
++      if (writeFailed) {
++        pipeline_cache_abort();
++      }
+     }
+ 
+     if (writeFailed) {
+-      pipeline_cache_abort();
+       return;
+     }
+   }
+@@ -1070,6 +1078,12 @@ static size_t load_pipeline_cache_entries(ShaderType type, uint32_t configVersio
+ }
+ 
+ static size_t load_pipeline_cache() {
++  // Guards every sqlite/SDL disk access this function makes (directly and via
++  // prepare_pipeline_cache_db/seed_pipeline_cache/load_pipeline_cache_entries)
++  // against DvdWorker's and file_cache's concurrent sdmc: reads on their own
++  // threads -- see switch_io_lock.h. Runs once during boot on a single thread,
++  // so this coarse a scope is safe (no nested SWITCH_IO_LOCK below it).
++  SWITCH_IO_LOCK();
+   if (!prepare_pipeline_cache_db()) {
+     return 0;
+   }
+@@ -1179,7 +1193,10 @@ void shutdown_pipeline_cache() {
+   g_hasPipelineThread = false;
+ 
+   stop_pipeline_cache_writer();
+-  pipeline_cache_abort();
++  {
++    SWITCH_IO_LOCK();
++    pipeline_cache_abort();
++  }
+   g_pipelineCacheBroken = false;
+   g_pipelinesPerFrame = 0;
+   g_gpuCachePrunePending = false;

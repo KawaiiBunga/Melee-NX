@@ -41,6 +41,8 @@ do_patch() {
   local p="$repo/switch/patches/melee-switch-gcc-compat.patch"
   if [[ -f "$p" ]]; then
     apply_patch_once "$melee_pc" "$p"
+    # Disc pointer slots resolved through MEM1's 4GB window; see src/pc/disc.h.
+    apply_patch_once "$melee_pc" "$repo/switch/patches/melee-switch-disc-ptr-window.patch"
   else
     echo "WARNING: melee-switch-gcc-compat.patch not yet created — skipping patch step."
     echo "         This patch removes -no-pie/-Ttext-segment and adds Switch path overrides."
@@ -59,7 +61,7 @@ do_configure() {
   cmake -S "$repo/switch" -B "$build_dir" -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE="$repo/switch/cmake/SwitchGCC.cmake" \
     -DCMAKE_BUILD_TYPE=Release \
-    "-DCMAKE_EXE_LINKER_FLAGS=-Wl,--wrap=pthread_create -Wl,--wrap=exit" \
+    "-DCMAKE_EXE_LINKER_FLAGS=-Wl,--wrap=pthread_create -Wl,--wrap=exit -Wl,--wrap=abort -Wl,--wrap=_exit -Wl,--wrap=__cxa_throw -Wl,--wrap=pthread_detach -Wl,--wrap=pthread_join" \
     -DMELEE_DAWN_SOURCE="$repo/ref/dawn" \
     -DMELEE_DAWN_BUILD="$repo/build/dawn-switch" \
     -DMELEE_SDL_SOURCE="$repo/ref/SDL" \

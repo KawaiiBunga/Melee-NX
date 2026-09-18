@@ -23,36 +23,56 @@ sources directly; it never `add_subdirectory()`s or reads melee-pc's own
 to keep MEM1 below 4GB for 32-bit disc pointer slots) is simply never invoked for the
 Switch build — there is nothing to strip.
 
-**MEM1 does not need a fixed low address on Switch at all.** `src/pc/disc.h`'s
-`pc_encode_dp()`/`pc_resolve_dp()` (backed by `pc_register_ext_ptr`/`pc_resolve_ext_ptr`
-in `src/pc/os.c`) already have a generic fallback: any host pointer that doesn't fit in
-32 bits is stored as `0x02000000 | index` into a 65536-entry indirection table instead
-of being truncated. This exists in upstream melee-pc already (almost certainly for the
-Android build, which is PIE/ASLR and can't guarantee sub-4GB addresses either) — it is
-not something melee-nx invented.
+**CORRECTED 2026-09-18 by hardware.** The paragraphs that used to sit here said
+MEM1 needed no special handling on Switch, because `pc_encode_dp()`/`pc_resolve_dp()`
+fall back to a `0x02000000 | index` indirection table for pointers that do not fit in
+32 bits. That reasoning was wrong, and the port aborted on the first archive it parsed:
 
-Consequently `AllocMEM1()` in `extern/aurora/lib/dolphin/os/OSMemory.cpp` only has real
-fixed-address logic for `_WIN32` and `__linux__` (x86_64/aarch64); every other platform,
-including `__SWITCH__`, already falls through to the generic `calloc(1, size)` branch,
-and that's correct — no aurora patch is needed for this. (An earlier version of this
-scaffold shipped `switch/src/mem1_switch.c`, which tried to `mmap(..., MAP_FIXED)` at
-0x80000000. That was wrong on two counts: devkitA64/libnx has no `<sys/mman.h>` at all
-— confirmed by searching the installed toolchain — so it wouldn't have compiled, and it
-was solving a problem the ext-pointer fallback already solves. It has been deleted.)
+```
+archive.c[18] : pointer 0x1f630c3ec0 does not fit a 32-bit disc slot
+```
 
-**Watch for on first hardware run:**
+The ext-pointer table only covers pointers written through `DP_SET`. Archive-internal
+relocation never goes near it — `Locate()` in `src/sysdolphin/baselib/archive.c` adds
+`(u32)(uintptr_t)archive->data` to each slot with raw 32-bit arithmetic, and so do
+axdriver's three table fixups and particle.c's three. Seven sites in total, all of which
+silently truncate an address above 4GB. So MEM1 genuinely does have to be addressable in
+32 bits.
+
+It also cannot be placed low on Horizon. libnx hands out heap far above 4GB, and
+`svcMapMemory` only accepts a destination inside the kernel's stack region, which a
+39-bit address space places below 4GB with probability under one percent.
+
+**Resolution: the MEM1 4GB window.** A slot now means "offset within whatever 4GB window
+MEM1 landed in", and `pc_resolve_dp` restores the high half. `AllocMEM1` gained a
+`__SWITCH__` branch that guarantees MEM1 does not straddle a 4GB boundary and starts at
+or above `0x03000000` — clear of ARAM offsets (below `0x01000000`) and of the
+`0x02xxxxxx` escape prefix. The seven raw relocation sites need no changes at all, since
+within one window only the low 32 bits ever differ.
+
+What *did* need changing: **70 sites that cast a disc slot straight to a pointer** with
+`(T*)(uintptr_t)`, bypassing `pc_resolve_dp`. These worked by accident while MEM1 was
+below 4GB. They are now `DP(T, slot)`, which is also the identity for ARAM offsets and
+so is correct on both branches of every `PC_IS_ARAM_ADDR` test.
+
+**The rule for all future work: never cast a disc slot to a pointer directly; use
+`DP(T, slot)`.**
+
+Patches: `melee-switch-disc-ptr-window.patch`, `aurora-switch-mem1-window.patch`.
+Note that `switch/src/mem1_switch.c` was deleted earlier in the project for trying to
+`mmap(..., MAP_FIXED)` at 0x80000000 — that deletion was still correct (devkitA64 has no
+`<sys/mman.h>`), it just was not the whole story.
+
+**Still true, and still worth watching:**
 - The 65536-slot ext-pointer table is a linear-scan-on-insert array (see
-  `pc_register_ext_ptr` in `src/pc/os.c`). It's only hit when a disc pointer is stored
-  (archive load/relocation, not per-frame), so it should be a one-time cost per loaded
-  archive — but a stage that registers many thousands of unique pointers could get
-  slow, and hitting the 65536 cap aborts (`pc_disc_ptr_overflow`). If this becomes a
-  real problem, raise `PC_MAX_EXT_PTRS` or switch it to a hash map.
-- libnx's default heap sizing (via `__libnx_initheap`) may or may not be large enough
-  for MEM1 (96 MB) + ARAM (16 MB) + Dawn/Aurora + game working set. No override has
-  been added preemptively since the libnx default usually claims most of the applet's
-  available memory automatically — verify actual behavior (or an `abort()`/OOM from
-  `calloc`) on the first successful link + hardware boot, and add a heap-size override
-  in `main_switch.cpp` (`__nx_heap_size`/`__libnx_initheap`) only if needed.
+  `pc_register_ext_ptr` in `src/pc/os.c`). It is only hit when a pointer outside MEM1's
+  window is stored in a slot, so it should stay a one-time cost per loaded archive — but
+  hitting the 65536 cap aborts (`pc_disc_ptr_overflow`). If it becomes a problem, raise
+  `PC_MAX_EXT_PTRS` or make it a hash map.
+- libnx's default heap sizing has proven large enough for MEM1 (96 MB) + ARAM (16 MB) +
+  Dawn/Aurora + the game working set: the console reports 3189 MiB total. Note that
+  `AllocMEM1`'s retry loop can transiently hold up to 4 rejected 96 MB blocks while
+  searching for a usable window; a fresh heap has always answered on the first attempt.
 
 ### 2b. melee-pc's aurora fork has drifted from KartPad-NX's — patches were rewritten
 `ref/melee-pc/extern/aurora` is melee-pc's own vendored aurora checkout, not the same
@@ -114,7 +134,15 @@ This likely works without modification — needs hardware verification.
 ### 7. Performance expectations
 Switch Tegra X1 = Cortex-A57 @ ~1 GHz (4 cores). melee-pc's Android build targets
 Cortex-A73 at similar clocks. Melee at 60fps should be within reach — the game is
-far lighter than MKW. GPU is not the bottleneck (same as KartPad-NX; endFrame ≈ 0).
+far lighter than MKW.
+
+**Updated 2026-09-18, after the first hardware boot:** the port reaches the menu but
+does not hit target frame rate, and audio is laggy. The claim that "GPU is not the
+bottleneck" was inherited from KartPad-NX and has never been measured for melee-nx —
+treat it as untested. Known contaminants must be removed before any measurement is
+believable, chiefly the `fsync` per log line added during bring-up. The pipeline and
+shader caches also fail to open, so every run recompiles every pipeline. See
+[HANDOFF-PERF-AUDIO.md](HANDOFF-PERF-AUDIO.md).
 
 ## Bring-up sequence
 
@@ -217,3 +245,47 @@ open question.
 - `__builtin_bswap*` in the aurora GX layer: confirmed working on aarch64 Clang/GCC.
 - `RmlUi` on Switch: never tested. May need the same `dl` removal as Tracy.
   Watch for `dlopen`/`dlsym` calls in RmlUi's font backend.
+
+
+## Confirmed on hardware (2026-09-18) — first boot to the main menu
+
+melee-nx now reaches the Melee main menu on a real console. Getting there took five
+distinct fixes, each found by instrumenting rather than guessing. Recorded here because
+every one of them is a Switch-specific trap the next port will hit too.
+
+### The logging pipeline was broken three ways before anything could be diagnosed
+Three writers shared one file, nothing was ever committed to the SD card, and the file
+being read was a stale local copy that had never been on the console. **Lesson: verify
+the build stamp in the log against the binary you just uploaded before believing
+anything the log says.** `kBuildStamp` is printed as line `00` for exactly this reason.
+
+### Crash reports named the wrong thread
+The process-exit path (`_exit` → `__libnx_exit` → `__appExit`) unmounts fsdev and NULLs
+the `sdmc` entry in newlib's `devoptab_list` while nine other threads are still running.
+Whichever one next touched the SD card took a Data Abort on a NULL devoptab, and
+Atmosphère reported *that* thread — the real reason for the exit never appeared. Fixed by
+wrapping `exit`, `abort` and `_exit` to call `svcExitProcess` directly. Note `abort()`
+does not go through `exit()`, so wrapping `exit` alone is not enough; an uncaught C++
+exception reaches `__terminate` → `abort()` → `_exit()`.
+
+### `pthread_detach` is an unconditional ENOSYS stub on devkitA64
+Disassembling the linked binary shows both paths falling through to `mov w0, #0x58; ret`.
+So **every `std::thread::detach()` throws `std::system_error`**, and melee-pc detaches in
+three places. Emulated in `clang_tls_switch.c` with a thread registry and a reaper:
+threads mark themselves finished on the way out and the reaper joins them, which returns
+immediately. A no-op detach would have leaked one kernel handle per preloaded file.
+`pthread_join` is real and works.
+
+### Disc pointers — see §2 above.
+
+### Finding the throw site
+`__builtin_return_address(0)` inside a `__cxa_throw` wrap is useless on its own: it lands
+in whichever libstdc++ helper threw, and `std::__throw_system_error` alone has 60+
+callers. `_Unwind_Backtrace` from inside the wrap gives the real chain, using the same
+`.eh_frame` data the throw is about to use. That is what named
+`std::thread::detach` → `pc_file_cache_start_prewarm`.
+
+### What is still unoptimised
+Bring-up traded speed for diagnosability and some of those trades are still in the tree —
+notably an `fsync` per log line. See [HANDOFF-PERF-AUDIO.md](HANDOFF-PERF-AUDIO.md),
+which is the entry point for performance and audio work.

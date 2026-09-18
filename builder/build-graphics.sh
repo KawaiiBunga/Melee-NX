@@ -54,6 +54,8 @@ prepare() {
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-status-compat.patch"
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-no-backtrace.patch"
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-no-mmap.patch"
+  apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-pipeline-cache-io-lock.patch"
+  apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-mem1-window.patch"
 }
 
 build_dawn() {

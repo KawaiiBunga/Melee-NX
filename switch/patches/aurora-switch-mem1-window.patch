@@ -1,0 +1,71 @@
+diff --git a/extern/aurora/lib/dolphin/os/OSMemory.cpp b/extern/aurora/lib/dolphin/os/OSMemory.cpp
+index ccaaae3..4d6074e 100644
+--- a/extern/aurora/lib/dolphin/os/OSMemory.cpp
++++ b/extern/aurora/lib/dolphin/os/OSMemory.cpp
+@@ -287,6 +287,66 @@ static void* AllocMEM1(u32 size) {
+   }
+   return p;
+ }
++#elif defined(__SWITCH__)
++#include <malloc.h>
++extern "C" void pc_disc_set_mem1_window(const void* base, uint32_t size);
++
++// Horizon gives out every allocation from libnx's heap, which the kernel maps
++// far above 4GB, and nothing can ask for lower: svcMapMemory only accepts a
++// destination inside the stack region, and a 39-bit address space puts that
++// below 4GB with probability under one percent. Falling through to the generic
++// calloc() below is what made every disc pointer unrepresentable on hardware
++// (2026-09-18: "pointer 0x1f630c3ec0 does not fit a 32-bit disc slot").
++//
++// So stop trying to place MEM1 low and make the 32-bit slots relative to
++// MEM1's own 4GB window instead -- see src/pc/disc.h. All this has to do is
++// hand back a block the window scheme can describe:
++//
++//   * it must not straddle a 4GB boundary, or the high half pc_resolve_dp
++//     restores would be wrong for part of MEM1;
++//   * its low 32 bits must start at or above 0x03000000, clear of the two
++//     ranges already spoken for -- below 0x01000000 is how the game
++//     recognises an ARAM offset (PC_IS_ARAM_ADDR), and 0x02xxxxxx is
++//     pc_encode_dp's escape prefix for pointers outside the window.
++static bool Mem1WindowUsable(const void* p, u32 size) {
++  const uintptr_t low = reinterpret_cast<uintptr_t>(p) & 0xFFFFFFFFULL;
++  return low >= 0x03000000ULL && low + size <= 0x100000000ULL;
++}
++
++static void* AllocMEM1(u32 size) {
++  // A rejected block has to stay held, or the allocator just hands the same
++  // address back. Four attempts is 384MB held at worst, early in boot when
++  // nothing else is allocated; a fresh heap has always answered on the first.
++  void* rejects[4];
++  size_t rejected = 0;
++  void* p = nullptr;
++  while (true) {
++    void* cand = memalign(0x1000, size);
++    if (cand == nullptr) {
++      break;
++    }
++    if (Mem1WindowUsable(cand, size)) {
++      p = cand;
++      break;
++    }
++    if (rejected == sizeof(rejects) / sizeof(rejects[0])) {
++      free(cand);
++      break;
++    }
++    rejects[rejected++] = cand;
++  }
++  for (size_t i = 0; i < rejected; ++i) {
++    free(rejects[i]);
++  }
++
++  if (p == nullptr) {
++    Log.fatal("Failed to place MEM1 ({} bytes) inside a single 4GB window at or above 0x03000000",
++              size);
++  }
++  memset(p, 0, size); // callers below expect calloc semantics
++  pc_disc_set_mem1_window(p, size);
++  return p;
++}
+ #else
+ static void* AllocMEM1(u32 size) {
+   return calloc(1, size);

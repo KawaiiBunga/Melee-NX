@@ -72,6 +72,10 @@ set(TRACY_ENABLE OFF CACHE BOOL "" FORCE)
 
 add_subdirectory("${MELEE_AURORA_SOURCE}" aurora)
 
+# Lets dvd.cpp/pipeline_cache.cpp reach switch_io_lock.h (see that header's comment).
+target_include_directories(aurora_dvd PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../src")
+target_include_directories(aurora_gx PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../src")
+
 # Strip libdl from Tracy — it doesn't exist on libnx.
 if(TARGET TracyClient)
   foreach(_link_property LINK_LIBRARIES INTERFACE_LINK_LIBRARIES)
