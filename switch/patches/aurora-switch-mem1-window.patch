@@ -1,8 +1,7 @@
-diff --git a/extern/aurora/lib/dolphin/os/OSMemory.cpp b/extern/aurora/lib/dolphin/os/OSMemory.cpp
-index ccaaae3..4d6074e 100644
---- a/extern/aurora/lib/dolphin/os/OSMemory.cpp
-+++ b/extern/aurora/lib/dolphin/os/OSMemory.cpp
-@@ -287,6 +287,66 @@ static void* AllocMEM1(u32 size) {
+diff --git a/lib/dolphin/os/OSMemory.cpp b/lib/dolphin/os/OSMemory.cpp
+--- a/lib/dolphin/os/OSMemory.cpp
++++ b/lib/dolphin/os/OSMemory.cpp
+@@ -287,6 +287,66 @@
    }
    return p;
  }

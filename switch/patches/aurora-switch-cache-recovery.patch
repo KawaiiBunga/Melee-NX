@@ -1,16 +1,62 @@
 diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
 --- a/lib/gfx/pipeline_cache.cpp
 +++ b/lib/gfx/pipeline_cache.cpp
-@@ -15,6 +15,8 @@
+@@ -10,10 +10,14 @@
+ #endif
+ #include "../sqlite_utils.hpp"
+ #include "../webgpu/gpu.hpp"
++#include "switch_io_lock.h"
+ 
  #include <algorithm>
  #include <atomic>
++#include <chrono>
  #include <condition_variable>
 +#include <cstdint>
 +#include <cstdio>
  #include <deque>
  #include <filesystem>
  #include <limits>
-@@ -62,6 +64,11 @@
+@@ -26,6 +30,39 @@
+ #include <absl/container/flat_hash_set.h>
+ #include <fmt/format.h>
+ #include <tracy/Tracy.hpp>
++
++#include "../thread.hpp"
++
++#if defined(__SWITCH__)
++// Declared here rather than pulling <switch.h> into this Dawn/aurora TU, whose
++// types collide with libnx macros. Signatures match libnx's svc.h exactly.
++extern "C" {
++uint32_t svcGetInfo(uint64_t* out, uint32_t id0, uint32_t handle, uint64_t id1);
++uint32_t svcSetThreadCoreMask(uint32_t handle, int32_t preferred_core, uint32_t affinity_mask);
++}
++namespace {
++constexpr uint32_t kCurThreadHandle = 0xFFFF8000u;
++constexpr uint32_t kCurProcessHandle = 0xFFFF8001u;
++constexpr uint32_t kInfoCoreMask = 0u;
++// Confine the caller to the highest core the process is allowed, alone. A cold
++// vkCreateGraphicsPipeline holds a core for its whole duration and cannot be
++// cooperatively yielded, so an unpinned Low-priority compiler still steals a
++// core from the game or FIFO thread mid-frame -- the telemetry's sim spikes
++// track compile bursts one-for-one. Pinning breaks that coupling: the compiler
++// gets the top core and the game/FIFO/render threads keep the rest.
++void pin_compiler_to_spare_core() {
++  uint64_t mask = 0;
++  if (svcGetInfo(&mask, kInfoCoreMask, kCurProcessHandle, 0) != 0 || mask == 0) {
++    return;
++  }
++  int top = 31;
++  while (top > 0 && ((mask >> top) & 1u) == 0) {
++    --top;
++  }
++  svcSetThreadCoreMask(kCurThreadHandle, top, 1u << top);
++}
++} // namespace
++#endif
+ 
+ namespace aurora::gfx {
+ static Module Log("aurora::gfx::pipeline_cache");
+@@ -61,6 +98,24 @@
  static std::mutex g_pipelineMutex;
  static bool g_hasPipelineThread = false;
  static size_t g_pipelinesPerFrame = 0;
@@ -19,10 +65,59 @@ diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
 +static std::atomic_uint64_t g_pipelineDrawMisses{0};
 +static uint64_t g_pipelineDrawMissWindow = 0;
 +static uint64_t g_pipelineStatFrames = 0;
++// Background pre-warm budget. The pipeline cache seed is ~6,500 entries; left
++// unpaced the worker compiles them back to back for the better part of an hour
++// at whatever priority the main thread has, which on a three-core Horizon
++// application means the game loses a third of the machine while it plays. Only
++// the *background* queue is paced -- a pipeline an actual draw is waiting on
++// goes through g_pipelineQueue and is never delayed by this.
++static std::atomic_size_t g_backgroundCredits{0};
++constexpr size_t BackgroundCreditsPerFrame = 1;
++constexpr size_t BackgroundCreditCap = 4;
++// Frames slower than this are a sign the machine has nothing to spare, so the
++// pre-warm stops granting itself credit until they recover. 20ms leaves room
++// for the odd long frame without pausing on every jitter.
++constexpr int64_t BackgroundFrameBudgetNs = 20'000'000;
  // For synchronous pipeline fallback (OpenGL)
  #ifdef NDEBUG
  constexpr size_t BuildPipelinesPerFrame = 5;
-@@ -740,7 +747,7 @@
+@@ -574,6 +629,16 @@
+ static bool write_pipeline_cache_record(const PipelineCacheWrite& write);
+ 
+ static std::string pipeline_cache_seed_path() {
++#if defined(__SWITCH__)
++  if (auto* io = SDL_IOFromFile("sdmc:/switch/melee-nx/initial_pipeline_cache.db", "rb")) {
++    SDL_CloseIO(io);
++    return "sdmc:/switch/melee-nx/initial_pipeline_cache.db";
++  }
++  if (auto* io = SDL_IOFromFile("romfs:/initial_pipeline_cache.db", "rb")) {
++    SDL_CloseIO(io);
++    return "romfs:/initial_pipeline_cache.db";
++  }
++#endif
+   if (g_config.resourcesPath == nullptr || g_config.resourcesPath[0] == '\0') {
+     return InitialPipelineCacheName;
+   }
+@@ -625,11 +690,13 @@
+     return;
+   }
+ 
+-  // If the target database is already populated, skip re-seeding to accelerate startup
+-  bool alreadySeeded = false;
+-  sqlite::exec(g_pipelineCacheDb, "SELECT 1 FROM pipeline_cache LIMIT 1;",
+-               [&alreadySeeded](int, char**, char**) { alreadySeeded = true; });
+-  if (alreadySeeded) {
++  // If the target database is already fully seeded, skip re-seeding to accelerate startup
++  int rowCount = 0;
++  sqlite::exec(g_pipelineCacheDb, "SELECT count(*) FROM pipeline_cache;",
++               [&rowCount](int, char** values, char**) {
++                 if (values && values[0]) rowCount = std::atoi(values[0]);
++               });
++  if (rowCount >= 10000) {
+     return;
+   }
+ 
+@@ -727,7 +794,7 @@
    }
  }
  
@@ -31,7 +126,19 @@ diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
    if (g_pipelineCacheBroken) {
      return false;
    }
-@@ -861,6 +868,59 @@
+@@ -743,7 +810,11 @@
+     return false;
+   }
+ 
++#if defined(__SWITCH__)
++  ret = sqlite::exec(g_pipelineCacheDb, "PRAGMA journal_mode=DELETE; PRAGMA synchronous=NORMAL;");
++#else
+   ret = sqlite::exec(g_pipelineCacheDb, "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
++#endif
+   if (ret != SQLITE_OK) {
+     Log.error("Failed to set pipeline cache pragmas: {}", sqlite3_errmsg(g_pipelineCacheDb));
+     pipeline_cache_abort();
+@@ -844,6 +915,59 @@
    return true;
  }
  
@@ -91,39 +198,180 @@ diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
  static void prune_old_pipeline_cache_versions() {
    if (!prepare_pipeline_cache_db()) {
      return;
-@@ -1233,6 +1293,31 @@
+@@ -946,6 +1070,10 @@
+ 
+     bool writeFailed = false;
+     {
++      // See load_pipeline_cache's SWITCH_IO_LOCK comment: this thread's sqlite
++      // writes need the same guard against DvdWorker's/file_cache's sdmc:
++      // reads on their own threads.
++      SWITCH_IO_LOCK();
+       sqlite::Transaction tx(g_pipelineCacheDb, Log, true);
+       if (!tx) {
+         Log.error("Failed to begin pipeline cache write transaction");
+@@ -962,10 +1090,13 @@
+           tx.commit();
+         }
+       }
++
++      if (writeFailed) {
++        pipeline_cache_abort();
++      }
+     }
+ 
+     if (writeFailed) {
+-      pipeline_cache_abort();
+       return;
+     }
+   }
+@@ -975,6 +1106,25 @@
+ #ifdef TRACY_ENABLE
+   tracy::SetThreadName("Pipeline compilation thread");
+ #endif
++  if (g_hasPipelineThread) {
++    // Dedicated worker only: end_pipeline_frame calls this function inline on
++    // the main thread when there is no worker, and must not demote it.
++    //
++    // Stay Low for the whole life of the thread, even for a pipeline an actual
++    // draw wants. Switch requests Normal priority, which *skips* a draw whose
++    // pipeline is not ready rather than blocking on it (see find_pipeline_impl),
++    // so rushing that compile buys nothing this frame -- the geometry is already
++    // going to be missing regardless. Raising the worker to Normal only made it
++    // contend with the game thread for one of Horizon's three cores, which is
++    // exactly the 6-10 FPS compile-burst stall the telemetry caught: sim and the
++    // unaccounted frame time both spiked in lockstep with skipped_draws. At Low,
++    // the compile lands on spare cycles and the missing geometry fills in over
++    // the next frames instead of tanking the current one.
++    thread::set_current({.name = "PipelineCompiler", .priority = thread::Priority::Low});
++#if defined(__SWITCH__)
++    pin_compiler_to_spare_core();
++#endif
++  }
+ 
+   bool hasMore = false;
+   while (g_hasPipelineThread || g_pipelinesPerFrame < BuildPipelinesPerFrame) {
+@@ -1000,6 +1150,22 @@
+       if (g_pipelineThreadEnd) {
+         break;
+       }
++      if (g_hasPipelineThread && g_pipelineQueue.empty()) {
++        // Nothing a draw is waiting on; this would be pre-warm work.
++        if (g_backgroundPipelineQueue.empty()) {
++          hasMore = false;
++          continue;
++        }
++        if (g_backgroundCredits.load(std::memory_order_relaxed) == 0) {
++          g_pipelineQueueCv.wait_for(lock, std::chrono::milliseconds(16), [] {
++            return !g_pipelineQueue.empty() || g_pipelineThreadEnd ||
++                   g_backgroundCredits.load(std::memory_order_relaxed) > 0;
++          });
++          hasMore = true;
++          continue;
++        }
++        g_backgroundCredits.fetch_sub(1, std::memory_order_relaxed);
++      }
+       auto& source = (!g_hasPipelineThread || !g_pipelineQueue.empty()) ? g_pipelineQueue : g_backgroundPipelineQueue;
+       pending = std::move(source.front());
+       source.pop_front();
+@@ -1070,6 +1236,12 @@
+ }
+ 
+ static size_t load_pipeline_cache() {
++  // Guards every sqlite/SDL disk access this function makes (directly and via
++  // prepare_pipeline_cache_db/seed_pipeline_cache/load_pipeline_cache_entries)
++  // against DvdWorker's and file_cache's concurrent sdmc: reads on their own
++  // threads -- see switch_io_lock.h. Runs once during boot on a single thread,
++  // so this coarse a scope is safe (no nested SWITCH_IO_LOCK below it).
++  SWITCH_IO_LOCK();
+   if (!prepare_pipeline_cache_db()) {
+     return 0;
+   }
+@@ -1128,7 +1300,11 @@
+  * per variant per install, not per visit. */
+ template <>
+ PipelineRef find_pipeline(ShaderType type, const gx::PipelineConfig& config, NewPipelineCallback&& cb) {
++#if defined(__SWITCH__)
++  return find_pipeline_impl(type, config, std::move(cb), PipelinePriority::Normal);
++#else
+   return find_pipeline_impl(type, config, std::move(cb), PipelinePriority::Blocking);
++#endif
+ }
+ 
+ #ifdef AURORA_ENABLE_RMLUI
+@@ -1179,7 +1355,10 @@
+   g_hasPipelineThread = false;
+ 
+   stop_pipeline_cache_writer();
+-  pipeline_cache_abort();
++  {
++    SWITCH_IO_LOCK();
++    pipeline_cache_abort();
++  }
+   g_pipelineCacheBroken = false;
+   g_pipelinesPerFrame = 0;
+   g_gpuCachePrunePending = false;
+@@ -1196,6 +1375,60 @@
    if (!g_hasPipelineThread) {
      g_pipelinesPerFrame = 0;
    }
++
++  const auto frameNow = std::chrono::steady_clock::now();
++  static auto framePrev = frameNow;
++  const auto frameDelta = std::chrono::duration_cast<std::chrono::nanoseconds>(frameNow - framePrev).count();
++  framePrev = frameNow;
++
++  // Grant the background pre-warm a slice only while frames are healthy. A
++  // struggling frame rate is the one situation where speculatively compiling
++  // pipelines nobody has asked for is certainly the wrong thing to spend the
++  // machine on, and this makes the worker back off on its own instead of
++  // needing a mode flag threaded through from the game.
++  if (frameDelta > 0 && frameDelta <= BackgroundFrameBudgetNs) {
++    if (g_backgroundCredits.load(std::memory_order_relaxed) < BackgroundCreditCap) {
++      g_backgroundCredits.fetch_add(BackgroundCreditsPerFrame, std::memory_order_relaxed);
++      g_pipelineQueueCv.notify_one();
++    }
++  }
 +  // Switch requests Normal priority, so a draw whose pipeline is not ready yet
 +  // is simply skipped (see find_pipeline's Switch branch). Fast frames with
 +  // missing geometry are not a win, and until now nothing counted them -- this
 +  // is the difference between "the frame budget fits" and "half the stage was
 +  // not drawn". Reported from the frame boundary, next to vi.c's PERF line.
 +  const uint64_t misses = g_pipelineDrawMisses.exchange(0, std::memory_order_relaxed);
-+  const uint64_t frames = ++g_pipelineStatFrames;
-+  if (frames >= 60) {
-+    g_pipelineStatFrames = 0;
-+    const uint64_t window = g_pipelineDrawMissWindow + misses;
-+    g_pipelineDrawMissWindow = 0;
-+    size_t pending = 0;
-+    size_t ready = 0;
-+    {
-+      std::lock_guard guard{g_pipelineMutex};
-+      pending = g_pendingPipelines.size();
-+      ready = g_pipelines.size();
-+    }
-+    if (window > 0 || pending > 0) {
-+      Log.info("PIPELINES skipped_draws/60f {} pending {} ready {} cache {}", window, pending, ready,
-+               g_pipelineCacheBroken ? "broken" : "ok");
-+    }
-+  } else {
-+    g_pipelineDrawMissWindow += misses;
++  g_pipelineDrawMissWindow += misses;
++  ++g_pipelineStatFrames;
++
++  // Report on wall time, not a frame count. A 60-frame window is one second at
++  // 60fps but ten seconds at six, which is exactly when the numbers matter and
++  // exactly when the previous version appeared to stop reporting.
++  static auto statPrev = frameNow;
++  if (frameNow - statPrev < std::chrono::seconds(2)) {
++    return;
++  }
++  const auto statMs = std::chrono::duration_cast<std::chrono::milliseconds>(frameNow - statPrev).count();
++  statPrev = frameNow;
++
++  const uint64_t window = g_pipelineDrawMissWindow;
++  const uint64_t windowFrames = g_pipelineStatFrames;
++  g_pipelineDrawMissWindow = 0;
++  g_pipelineStatFrames = 0;
++
++  size_t pending = 0;
++  size_t ready = 0;
++  size_t background = 0;
++  {
++    std::lock_guard guard{g_pipelineMutex};
++    pending = g_pendingPipelines.size();
++    ready = g_pipelines.size();
++    background = g_backgroundPipelineQueue.size();
++  }
++  if (window > 0 || pending > 0) {
++    Log.info("PIPELINES skipped_draws {} over {} frames/{}ms pending {} background {} ready {} cache {}", window,
++             windowFrames, statMs, pending, background, ready, g_pipelineCacheBroken ? "broken" : "ok");
 +  }
  }
  
  void end_pipeline_frame() {
-@@ -1245,6 +1330,7 @@
+@@ -1208,6 +1441,7 @@
    std::lock_guard guard{g_pipelineMutex};
    const auto it = g_pipelines.find(ref);
    if (it == g_pipelines.end()) {
@@ -131,73 +379,3 @@ diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
      return false;
    }
    pipeline = it->second.pipeline;
-diff --git a/lib/webgpu/gpu_cache.cpp b/lib/webgpu/gpu_cache.cpp
---- a/lib/webgpu/gpu_cache.cpp
-+++ b/lib/webgpu/gpu_cache.cpp
-@@ -1,3 +1,4 @@
-+#include <cstdio>
- #include <cstring>
- #include <cstdint>
- #include <mutex>
-@@ -204,6 +205,33 @@
-   return true;
- }
- 
-+// The dawn cache is derived data: everything in it can be recompiled. Until
-+// now a single torn write disabled it permanently, because every later launch
-+// failed the same PRAGMA and set cache_broken -- so every pipeline was compiled
-+// from scratch on first use, forever. Move the unreadable file aside once and
-+// start a fresh database instead. The bad copy is kept for diagnosis, not
-+// silently deleted.
-+static bool quarantine_cache_file() {
-+  const auto path = io::fs_path_to_string(cache_path());
-+  const auto bad = path + ".corrupt";
-+  const auto journal = path + "-journal";
-+
-+  std::remove(bad.c_str());
-+  if (std::rename(path.c_str(), bad.c_str()) != 0) {
-+    if (std::remove(path.c_str()) != 0) {
-+      Log.error("Failed to quarantine unreadable dawn cache at '{}'", path);
-+      return false;
-+    }
-+    Log.warn("Deleted unreadable dawn cache '{}' (could not rename it aside)", path);
-+  } else {
-+    Log.warn("Quarantined unreadable dawn cache to '{}'; rebuilding", bad);
-+  }
-+  // The rollback journal describes the file that just moved; it must not be
-+  // replayed into the replacement.
-+  std::remove(journal.c_str());
-+  return true;
-+}
-+
- static bool cache_init() {
-   if (cache_broken) {
-     return false;
-@@ -213,14 +241,23 @@
-     return true;
-   }
- 
--  if (!cache_init_core()) {
--    Log.error("SQLite DB init failed");
-+  if (cache_init_core()) {
-+    Log.debug("SQLite cache init succeeded");
-+    return true;
-+  }
-+
-+  Log.error("SQLite DB init failed");
-+  // Drop the handle before touching the file, then try exactly once more on a
-+  // clean database. A second failure is not a corrupt file -- it is the cache
-+  // path itself -- so stop rather than churn the SD card every call.
-+  sqlite3_close(db);
-+  db = nullptr;
-+  if (!quarantine_cache_file() || !cache_init_core()) {
-     init_abort();
-     return false;
-   }
- 
--  Log.debug("SQLite cache init succeeded");
--
-+  Log.info("SQLite cache init succeeded after rebuild");
-   return true;
- }
- 

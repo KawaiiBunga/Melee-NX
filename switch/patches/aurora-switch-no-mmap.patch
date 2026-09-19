@@ -1,7 +1,6 @@
-diff --git a/extern/aurora/lib/dolphin/dvd/dvd.cpp b/extern/aurora/lib/dolphin/dvd/dvd.cpp
-index 839f6d5..e9b42c4 100644
---- a/extern/aurora/lib/dolphin/dvd/dvd.cpp
-+++ b/extern/aurora/lib/dolphin/dvd/dvd.cpp
+diff --git a/lib/dolphin/dvd/dvd.cpp b/lib/dolphin/dvd/dvd.cpp
+--- a/lib/dolphin/dvd/dvd.cpp
++++ b/lib/dolphin/dvd/dvd.cpp
 @@ -11,7 +11,7 @@
  #define WIN32_LEAN_AND_MEAN
  #define NOMINMAX
@@ -28,7 +27,7 @@ index 839f6d5..e9b42c4 100644
  
  using namespace aurora::dvd::impl;
  
-@@ -178,7 +181,7 @@ void mmapStreamClose(void* userData) {
+@@ -178,7 +181,7 @@
    if (stream->fileHandle != INVALID_HANDLE_VALUE) {
      CloseHandle(stream->fileHandle);
    }
@@ -37,7 +36,7 @@ index 839f6d5..e9b42c4 100644
    if (stream->data != nullptr && stream->data != MAP_FAILED) {
      munmap(const_cast<uint8_t*>(stream->data), static_cast<size_t>(stream->size));
    }
-@@ -196,6 +199,7 @@ int64_t sdlStreamReadAt(void* userData, uint64_t offset, void* out, size_t len)
+@@ -196,6 +199,7 @@
      return -1;
    }
  
@@ -45,7 +44,7 @@ index 839f6d5..e9b42c4 100644
    if (SDL_SeekIO(io, static_cast<Sint64>(offset), SDL_IO_SEEK_SET) < 0) {
      return -1;
    }
-@@ -218,6 +222,7 @@ int64_t sdlStreamLen(void* userData) {
+@@ -218,6 +222,7 @@
      return -1;
    }
  
@@ -53,7 +52,7 @@ index 839f6d5..e9b42c4 100644
    const Sint64 size = SDL_GetIOSize(io);
    return size < 0 ? -1 : static_cast<int64_t>(size);
  }
-@@ -453,6 +458,28 @@ public:
+@@ -453,6 +458,28 @@
      m_doneCv.notify_all();
    }
  
@@ -82,7 +81,7 @@ index 839f6d5..e9b42c4 100644
    void enqueue(DVDCommandBlock* block) {
      bool executeNow = false;
      {
-@@ -564,10 +591,18 @@ private:
+@@ -564,9 +591,17 @@
  
      std::unique_lock lk{m_mutex};
      while (true) {
@@ -90,7 +89,7 @@ index 839f6d5..e9b42c4 100644
 +      m_cv.wait(lk, [&] { return m_shutdown || !m_queue.empty() || m_syncTask != nullptr; });
        if (m_shutdown) {
          return;
-       }
++      }
 +      if (m_syncTask != nullptr) {
 +        std::function<void()> task = std::move(m_syncTask);
 +        m_syncTask = nullptr;
@@ -98,11 +97,10 @@ index 839f6d5..e9b42c4 100644
 +        task();
 +        lk.lock();
 +        continue;
-+      }
+       }
        DVDCommandBlock* block = m_queue.front();
        m_queue.pop_front();
-       m_activeBlock = block;
-@@ -667,6 +702,7 @@ private:
+@@ -667,6 +702,7 @@
    std::mutex m_mutex;
    std::condition_variable m_cv;
    std::condition_variable m_doneCv;
@@ -110,7 +108,7 @@ index 839f6d5..e9b42c4 100644
    std::deque<DVDCommandBlock*> m_queue;
    DVDCommandBlock* m_activeBlock = nullptr;
    DVDCommandBlock* m_cancelActiveBlock = nullptr;
-@@ -711,16 +747,7 @@ void cbForPrepareStreamAsync(s32 result, DVDCommandBlock* block) {
+@@ -711,16 +747,7 @@
  
  } // namespace
  
@@ -128,7 +126,7 @@ index 839f6d5..e9b42c4 100644
    NodDiscStream stream{};
    bool streamReady = false;
  
-@@ -789,7 +816,11 @@ bool aurora_dvd_open(const char* disc_path) {
+@@ -789,7 +816,11 @@
  #endif
  
    if (!streamReady) {
@@ -141,7 +139,7 @@ index 839f6d5..e9b42c4 100644
      if (io == nullptr) {
        return false;
      }
-@@ -844,8 +875,37 @@ bool aurora_dvd_open(const char* disc_path) {
+@@ -844,8 +875,37 @@
    s_currentDir = 0;
    s_currentPath = "/";
    s_initialized = true;
@@ -161,20 +159,20 @@ index 839f6d5..e9b42c4 100644
 +#if defined(__SWITCH__)
 +  // See DvdWorker::runSync's comment: the open must happen on the same
 +  // thread that will service all subsequent reads.
-   s_worker.start();
++  s_worker.start();
 +  bool opened = false;
 +  s_worker.runSync([&] { opened = openDiscBody(disc_path); });
 +  if (!opened) {
 +    s_worker.stop();
 +    return false;
 +  }
-   return true;
++  return true;
 +#else
 +  if (!openDiscBody(disc_path)) {
 +    return false;
 +  }
-+  s_worker.start();
-+  return true;
+   s_worker.start();
+   return true;
 +#endif
  }
  

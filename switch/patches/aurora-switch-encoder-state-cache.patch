@@ -1,20 +1,3 @@
-diff --git a/lib/gfx/encoding.hpp b/lib/gfx/encoding.hpp
---- a/lib/gfx/encoding.hpp
-+++ b/lib/gfx/encoding.hpp
-@@ -5,6 +5,13 @@ namespace aurora::gfx {
- 
- bool bind_pipeline(PipelineRef ref, const wgpu::RenderPassEncoder& pass);
- 
-+// These state caches are scoped to one WebGPU render pass. They avoid
-+// repeating driver calls for adjacent GX draws without carrying bindings
-+// across custom/offscreen encoders.
-+void bind_texture_group(const wgpu::RenderPassEncoder& pass, BindGroupRef ref);
-+void set_blend_constant_for_dst_alpha(const wgpu::RenderPassEncoder& pass, uint32_t dstAlpha);
-+void reset_encoder_bind_cache() noexcept;
-+
- namespace detail {
- void encode_op(wgpu::CommandEncoder& encoder, FramePacket& frame, const FrameOp& op);
- }
 diff --git a/lib/gfx/encoding.cpp b/lib/gfx/encoding.cpp
 --- a/lib/gfx/encoding.cpp
 +++ b/lib/gfx/encoding.cpp
@@ -26,7 +9,7 @@ diff --git a/lib/gfx/encoding.cpp b/lib/gfx/encoding.cpp
  
  #include "clear.hpp"
  #include "depth_peek.hpp"
-@@ -72,6 +73,7 @@ void execute_encoder_task(wgpu::CommandEncoder& cmd, FramePacket& frame, const E
+@@ -108,6 +109,7 @@
  void render_pass(const wgpu::RenderPassEncoder& pass, FramePacket& frame, RenderPass& passInfo) {
    ZoneScoped;
    g_currentPipeline = UINTPTR_MAX;
@@ -34,7 +17,7 @@ diff --git a/lib/gfx/encoding.cpp b/lib/gfx/encoding.cpp
  #ifdef AURORA_GFX_DEBUG_GROUPS
    std::vector<std::string> lastDebugGroupStack;
  #endif
-@@ -119,6 +121,7 @@ void render_pass(const wgpu::RenderPassEncoder& pass, FramePacket& frame, Render
+@@ -161,6 +163,7 @@
      case CommandType::CustomDraw: {
        render_custom_draw(cmd.data.customDraw, pass, passInfo);
        g_currentPipeline = UINTPTR_MAX;
@@ -42,7 +25,7 @@ diff --git a/lib/gfx/encoding.cpp b/lib/gfx/encoding.cpp
        pass.SetBindGroup(0, resources().staticBindGroup);
        pass.SetBindGroup(2, gx::g_emptyTextureBindGroup);
        if (hasViewport) {
-@@ -297,4 +300,35 @@ bool bind_pipeline(PipelineRef ref, const wgpu::RenderPassEncoder& pass) {
+@@ -418,4 +421,35 @@
    g_currentPipeline = ref;
    return true;
  }
@@ -78,19 +61,52 @@ diff --git a/lib/gfx/encoding.cpp b/lib/gfx/encoding.cpp
 +  g_haveBlendConstant = false;
 +}
  } // namespace aurora::gfx
+diff --git a/lib/gfx/encoding.hpp b/lib/gfx/encoding.hpp
+--- a/lib/gfx/encoding.hpp
++++ b/lib/gfx/encoding.hpp
+@@ -6,6 +6,13 @@
+ 
+ bool bind_pipeline(PipelineRef ref, const wgpu::RenderPassEncoder& pass);
+ 
++// These state caches are scoped to one WebGPU render pass. They avoid
++// repeating driver calls for adjacent GX draws without carrying bindings
++// across custom/offscreen encoders.
++void bind_texture_group(const wgpu::RenderPassEncoder& pass, BindGroupRef ref);
++void set_blend_constant_for_dst_alpha(const wgpu::RenderPassEncoder& pass, uint32_t dstAlpha);
++void reset_encoder_bind_cache() noexcept;
++
+ namespace detail {
+ void encode_op(wgpu::CommandEncoder& encoder, FramePacket& frame, const FrameOp& op);
+ }
 diff --git a/lib/gx/pipeline.cpp b/lib/gx/pipeline.cpp
 --- a/lib/gx/pipeline.cpp
 +++ b/lib/gx/pipeline.cpp
-@@ -110,14 +110,13 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
+@@ -56,6 +56,7 @@
+     return;
+   }
+ 
++#if !defined(__SWITCH__)
+   // AURORA_ONLY_UNTEX_VTX=<n>: render ONLY untextured draws with n vertices
+   // and drop everything else, so the offending geometry can be seen in
+   // isolation on a black frame. Suppressing a draw proves it is responsible;
+@@ -102,18 +103,20 @@
+       return;
+     }
+   }
++#endif
+ 
+   const auto& resources = gfx::detail::resources();
+   pass.SetImmediates(0, &data.immediateData, sizeof(data.immediateData));
    const std::array offsets{data.uniformRange.offset};
    pass.SetBindGroup(1, resources.uniformBindGroup, offsets.size(), offsets.data());
    if (data.bindGroups.textureBindGroup) {
 -    pass.SetBindGroup(2, gfx::find_bind_group(data.bindGroups.textureBindGroup));
 +    gfx::bind_texture_group(pass, data.bindGroups.textureBindGroup);
    }
-   if (data.indexCount != 0) {
-     pass.SetIndexBuffer(resources.indexBuffer, wgpu::IndexFormat::Uint16, data.idxRange.offset, data.idxRange.size);
-   }
+-  pass.SetIndexBuffer(resources.indexBuffer, wgpu::IndexFormat::Uint16, data.idxRange.offset, data.idxRange.size);
++  if (data.indexCount != 0) {
++    pass.SetIndexBuffer(resources.indexBuffer, wgpu::IndexFormat::Uint16, data.idxRange.offset, data.idxRange.size);
++  }
    if (data.dstAlpha != UINT32_MAX) {
 -    const wgpu::Color color{0.f, 0.f, 0.f, data.dstAlpha / 255.f};
 -    pass.SetBlendConstant(&color);

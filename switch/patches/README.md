@@ -13,18 +13,19 @@ Patches applied idempotently by `builder/build-graphics.sh` and `builder/build-m
 | `sdl-dusklight-melee-nx.patch` | `ref/SDL-dusklight` | melee-nx's layer on that backend: external-graphics mode, four-player pad enumeration with per-device state and analog triggers, audren open/close error handling and short-buffer padding |
 | `aurora-switch-surface.patch` | `ref/melee-pc/extern/aurora` | Constructs `SurfaceSourceSwitchNativeWindow` from `nwindowGetDefault()` in `BackendBinding.cpp` |
 | `aurora-switch-dawn-backends.patch` | `ref/melee-pc/extern/aurora` | Declares Vulkan-only `DAWN_ENABLE_*` for `CMAKE_SYSTEM_NAME=NintendoSwitch`; forces present mode to Fifo on Switch for bring-up |
-| `aurora-switch-status-compat.patch` | `ref/melee-pc/extern/aurora` | Dawn/WebGPU status API compatibility for the pinned source snapshot |
+| `aurora-switch-platform-compat.patch` | `ref/melee-pc/extern/aurora` | Preserves the recovered snapshot's AArch64 math and THP compatibility changes |
 | `aurora-switch-no-backtrace.patch` | `ref/melee-pc/extern/aurora` | Disables unsupported host backtrace integration on Switch |
 | `aurora-switch-no-mmap.patch` | `ref/melee-pc/extern/aurora` | Replaces unsupported mmap-dependent behavior for Horizon/newlib |
-| `aurora-switch-pipeline-cache-io-lock.patch` | `ref/melee-pc/extern/aurora` | Serializes cache I/O against Switch filesystem lifetime hazards; retained pending measured removal testing |
 | `aurora-switch-mem1-window.patch` | `ref/melee-pc/extern/aurora` | Makes Aurora resolve Melee's 32-bit disc-pointer slots through the MEM1 4 GiB window |
 | `aurora-switch-encoder-state-cache.patch` | `ref/melee-pc/extern/aurora` | Dusklight-derived render-pass-scoped suppression of redundant texture bind-group and destination-alpha blend-constant calls |
-| `aurora-switch-cache-recovery.patch` | `ref/melee-pc/extern/aurora` | Quarantines and rebuilds an unreadable dawn/pipeline cache instead of disabling caching for every future launch; counts draws skipped because their pipeline was still compiling |
-| `aurora-switch-perf-imgui.patch` | `ref/melee-pc/extern/aurora` | Local performance/profiler and ImGui integration changes; currently applied in the reference snapshot but not yet owned by `build-graphics.sh` |
-| `melee-switch-gcc-compat.patch` | `ref/melee-pc` | Renames melee-pc's `main()` to `melee_main_impl()` under `__SWITCH__` (avoids clashing with `main_switch.cpp`'s NRO entry); points `SDL_GetPrefPath`/window title at `melee-nx`; forces `startFullscreen` |
+| `aurora-switch-cache-recovery.patch` | `ref/melee-pc/extern/aurora` | Descriptor-cache recovery and I/O lock, compiler pin/priority/pacing, skipped-draw telemetry |
+| `aurora-switch-blob-cache-batch.patch` | `ref/melee-pc/extern/aurora` | Dawn cache recovery, batched writes, flush API declarations |
+| `aurora-switch-perf-imgui.patch` | `ref/melee-pc/extern/aurora` | ImGui pass reuse, Dawn status compatibility, flush API implementation and end-frame stage timers |
+| `aurora-switch-thread-sweep.patch` | `ref/melee-pc/extern/aurora` | Connects named thread setup to the optional Switch affinity sweep |
+| `melee-switch-gcc-compat.patch` | `ref/melee-pc` | Launcher/resource/file-cache compatibility, recovered audio changes and negotiated-device telemetry |
 | `melee-switch-disc-ptr-window.patch` | `ref/melee-pc` | Adds MEM1-window pointer encoding/resolution and converts raw disc-slot casts to `DP()` |
 | `melee-switch-input-worker.patch` | `ref/melee-pc` | Avoids creating an unused auxiliary SDL input worker on Switch; `PADRead` remains on the main thread |
-| `melee-switch-perf-telemetry.patch` | `ref/melee-pc` | Enables the existing frame profiler by default on Switch and writes its per-second stage breakdown to `melee-nx-runtime.log` |
+| `melee-switch-perf-telemetry.patch` | `ref/melee-pc` | Entry-point rename, Switch startup/log sink, OS compatibility and frame/alarms/retrace telemetry |
 | `tracy-switch-platform.patch` | fetched Tracy source | Switch platform guards for the optional Tracy dependency |
 
 Patches are adapted from the proven KartPad-NX set (dawn/sdl) where the underlying
@@ -48,15 +49,21 @@ bodies. Regenerate the melee-nx layer by reading `release-3.4.10` into a
 scratch index, `git apply --cached --recount` the Dusklight patch, then
 `git diff` the worktree against that index.
 
-## Current patch-stack caveat
+## Reconstructed patch ownership (2026-09-19)
 
-The 2026-09-19 local `ref/melee-pc` tree is a layered historical snapshot.
-Several later focused patches and manual edits overlap files and context owned
-by `melee-switch-gcc-compat.patch`, so that old monolithic patch does not
-reverse-match the fully layered tree even though its functional changes are
-present. Do not force-apply it or reset the reference tree. The currently
-verified build path is `build-graphics.sh prepare`, then the separate
-`build-melee.sh configure` and `build-melee.sh build` stages. New patches must
-still follow reverse-check-first idempotency and should own disjoint source
-regions wherever possible. Patch-stack normalization is tracked in
-`docs/TODO.md` and `docs/PLAN-CPU-SDL-DUSKLIGHT.md`.
+The Melee/Aurora patches now own disjoint files against melee-pc revision
+`7c9a468f4f8206780c4cd762be1da7772daaeabf`. They preserve the complete recovered
+source state, including previously uncaptured performance and compatibility
+edits. The old status and pipeline-I/O patches are absorbed into the owning
+patches above. `build-graphics.sh` applies the profiler patch as well.
+
+Aurora patch paths are relative to `extern/aurora`; Melee patch paths are
+relative to melee-pc. Git must run from its actual repository root with an
+explicit directory prefix for nested trees. A success exit code from
+`git -C extern/aurora apply` can otherwise mean every hunk was skipped.
+
+Run `python builder/verify-patches.py` after editing reference sources. It
+reconstructs patched files from pinned Git objects in a disposable directory,
+checks application and reversal, rejects overlapping ownership, and compares
+the result with the live sources. Do not reset or clean the reference trees.
+Performance experiments are described in [PERFORMANCE.md](../../PERFORMANCE.md).

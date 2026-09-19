@@ -1,5 +1,9 @@
 # Porting notes — melee-pc → Switch (melee-nx)
 
+> Latest implementation and measurement status:
+> [HANDOFF-PERF-SWEEP.md](HANDOFF-PERF-SWEEP.md). Older dated checkpoints below
+> remain as the diagnosis history.
+
 ## Architecture
 
 melee-pc is a **native C port** (not a translator/JIT). The game C code runs directly

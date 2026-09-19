@@ -1,8 +1,55 @@
-﻿diff --git a/extern/aurora/lib/aurora.cpp b/extern/aurora/lib/aurora.cpp
-index 0e1819e..0412ed6 100644
---- a/extern/aurora/lib/aurora.cpp
-+++ b/extern/aurora/lib/aurora.cpp
-@@ -357,26 +357,11 @@ void end_frame() noexcept {
+diff --git a/lib/aurora.cpp b/lib/aurora.cpp
+--- a/lib/aurora.cpp
++++ b/lib/aurora.cpp
+@@ -1,6 +1,9 @@
+ #include <aurora/aurora.h>
+ #include <aurora/time.hpp>
+ #include <cmath>
++#if defined(__SWITCH__)
++#include "perf_switch.h"
++#endif
+ 
+ #ifdef AURORA_ENABLE_GX
+ #include "gfx/resources.hpp"
+@@ -267,10 +270,27 @@
+ void end_frame() noexcept {
+   ZoneScoped;
+ #ifdef AURORA_ENABLE_GX
++#if defined(__SWITCH__)
++  uint64_t stageStart = melee_nx_perf_now();
++  const auto stageDone = [&stageStart](MeleePerfStage stage) {
++    const uint64_t now = melee_nx_perf_now();
++    melee_nx_perf_stage(stage, now - stageStart);
++    stageStart = now;
++  };
++#endif
+   gx::fifo::drain();
+   gx::fifo::end_frame();
++#if defined(__SWITCH__)
++  stageDone(MELEE_PERF_FIFO);
++#endif
+   gx::texture::end_frame();
++#if defined(__SWITCH__)
++  stageDone(MELEE_PERF_TEXTURE);
++#endif
+   gfx::finish();
++#if defined(__SWITCH__)
++  stageDone(MELEE_PERF_FINISH);
++#endif
+   auto imguiDrawData = imgui::freeze();
+ 
+   const auto& presentSource = webgpu::present_source();
+@@ -288,6 +308,9 @@
+   }
+ #endif
+ 
++#if defined(__SWITCH__)
++  stageDone(MELEE_PERF_UI);
++#endif
+   gfx::end_frame([rmlBindGroup = std::move(rmlBindGroup), rmlOverlay, viewport,
+                   imguiDrawData = std::move(imguiDrawData)](
+                      wgpu::CommandEncoder& encoder, std::vector<gfx::AfterSubmitCallback> afterSubmitCallbacks) {
+@@ -357,26 +380,11 @@
            pass.SetBindGroup(0, rmlBindGroup, 0, nullptr);
            pass.Draw(3);
          }
@@ -34,7 +81,7 @@ index 0e1819e..0412ed6 100644
          pass.End();
        }
      } else {
-@@ -392,14 +377,17 @@ void end_frame() noexcept {
+@@ -392,14 +400,17 @@
      webgpu::gpu_prof::after_submit();
      if (canPresent && g_surface) {
        ZoneScopedN("Present");
@@ -54,42 +101,34 @@ index 0e1819e..0412ed6 100644
          gfx::after_present();
          /* Only on the transition into suboptimal: refresh_surface() calls
           * gpu_synchronize(), so asking every frame would stall the pipeline
-diff --git a/extern/aurora/lib/gx/pipeline.cpp b/extern/aurora/lib/gx/pipeline.cpp
-index 6b2acfe..19d1f3c 100644
---- a/extern/aurora/lib/gx/pipeline.cpp
-+++ b/extern/aurora/lib/gx/pipeline.cpp
-@@ -56,6 +56,7 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
-     return;
-   }
- 
-+#if !defined(__SWITCH__)
-   // AURORA_ONLY_UNTEX_VTX=<n>: render ONLY untextured draws with n vertices
-   // and drop everything else, so the offending geometry can be seen in
-   // isolation on a black frame. Suppressing a draw proves it is responsible;
-@@ -102,6 +103,7 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
-       return;
-     }
-   }
+@@ -465,6 +476,9 @@
+     TracyPlot("aurora: lastStorageSize", static_cast<int64_t>(stats.lastStorageSize));
+     TracyPlot("aurora: lastTextureUploadSize", static_cast<int64_t>(stats.lastTextureUploadSize));
+   });
++#if defined(__SWITCH__)
++  stageDone(MELEE_PERF_DISPATCH);
 +#endif
  
-   const auto& resources = gfx::detail::resources();
-   pass.SetImmediates(0, &data.immediateData, sizeof(data.immediateData));
-@@ -110,7 +112,9 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
-   if (data.bindGroups.textureBindGroup) {
-     pass.SetBindGroup(2, gfx::find_bind_group(data.bindGroups.textureBindGroup));
-   }
--  pass.SetIndexBuffer(resources.indexBuffer, wgpu::IndexFormat::Uint16, data.idxRange.offset, data.idxRange.size);
-+  if (data.indexCount != 0) {
-+    pass.SetIndexBuffer(resources.indexBuffer, wgpu::IndexFormat::Uint16, data.idxRange.offset, data.idxRange.size);
-+  }
-   if (data.dstAlpha != UINT32_MAX) {
-     const wgpu::Color color{0.f, 0.f, 0.f, data.dstAlpha / 255.f};
-     pass.SetBlendConstant(&color);
-diff --git a/extern/aurora/lib/imgui.cpp b/extern/aurora/lib/imgui.cpp
-index 494640b..bc6e1d4 100644
---- a/extern/aurora/lib/imgui.cpp
-+++ b/extern/aurora/lib/imgui.cpp
-@@ -220,6 +220,10 @@ DrawData freeze() noexcept {
+ #endif
+ }
+@@ -506,5 +520,13 @@
+   (void)preserve;
+ #endif
+ }
++void aurora_flush_caches() {
++#ifdef AURORA_ENABLE_GX
++  // Switch tears the process down with svcExitProcess and no fini processing,
++  // so nothing else on the way out will commit what the shader blob cache has
++  // buffered. Called from the exit wrapper -- see switch/src/clang_tls_switch.c.
++  aurora::webgpu::cache_flush();
++#endif
++}
+ void aurora_set_timescale(float scale) { aurora::time::set_scale(scale); }
+ float aurora_get_timescale() { return aurora::time::scale(); }
+diff --git a/lib/imgui.cpp b/lib/imgui.cpp
+--- a/lib/imgui.cpp
++++ b/lib/imgui.cpp
+@@ -220,6 +220,10 @@
    return DrawData{std::move(frozen)};
  }
  
@@ -100,11 +139,10 @@ index 494640b..bc6e1d4 100644
  void render(const wgpu::RenderPassEncoder& pass, const DrawData& drawData) noexcept {
    ZoneScoped;
  
-diff --git a/extern/aurora/lib/imgui.hpp b/extern/aurora/lib/imgui.hpp
-index a11a7f8..03034dd 100644
---- a/extern/aurora/lib/imgui.hpp
-+++ b/extern/aurora/lib/imgui.hpp
-@@ -25,6 +25,7 @@ private:
+diff --git a/lib/imgui.hpp b/lib/imgui.hpp
+--- a/lib/imgui.hpp
++++ b/lib/imgui.hpp
+@@ -25,6 +25,7 @@
  
    friend DrawData freeze() noexcept;
    friend void render(const wgpu::RenderPassEncoder& pass, const DrawData& drawData) noexcept;
@@ -112,7 +150,7 @@ index a11a7f8..03034dd 100644
  };
  
  void create_context() noexcept;
-@@ -35,5 +36,6 @@ void process_event(const SDL_Event& event) noexcept;
+@@ -35,5 +36,6 @@
  bool wants_capture_event(const SDL_Event& event) noexcept;
  void new_frame(const AuroraWindowSize& size) noexcept;
  DrawData freeze() noexcept;

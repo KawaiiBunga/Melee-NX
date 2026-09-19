@@ -1,6 +1,9 @@
+diff --git a/cmake/AuroraDawnProvider.cmake b/cmake/AuroraDawnProvider.cmake
 --- a/cmake/AuroraDawnProvider.cmake
 +++ b/cmake/AuroraDawnProvider.cmake
-@@ -14,5 +14,12 @@
+@@ -12,7 +12,14 @@
+ # When using a non-vendored Dawn, we don't get DAWN_ENABLE_* from its build.
+ # Infer from the target platform instead.
  function(_aurora_dawn_set_platform_backends)
 -  if (WIN32)
 +  if (CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch")
@@ -14,6 +17,7 @@
      set(DAWN_ENABLE_D3D12 ON CACHE INTERNAL "")
      set(DAWN_ENABLE_D3D11 ON CACHE INTERNAL "")
      set(DAWN_ENABLE_VULKAN ON CACHE INTERNAL "")
+diff --git a/lib/webgpu/gpu.cpp b/lib/webgpu/gpu.cpp
 --- a/lib/webgpu/gpu.cpp
 +++ b/lib/webgpu/gpu.cpp
 @@ -268,6 +268,13 @@

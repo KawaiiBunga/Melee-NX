@@ -14,18 +14,18 @@ You supply your own disc image. No game code or assets are distributed here.
 
 ## Status
 
-**Playable but slow.** It boots on real hardware, reaches the main menu, and
-plays matches. Frame rate is the active problem and the reason this is not a
-release.
+**Playable, improving.** It boots on real hardware, reaches the main menu, and
+plays matches at roughly 36 fps (median) / 57 (90th percentile) at 720p on stock
+clocks. A locked 60 is the remaining goal.
 
 | | |
 |---|---|
 | Boots on hardware | yes |
 | Menus | render and respond |
-| Gameplay | runs, ~15–20 FPS at stock clocks on the best build so far |
+| Gameplay | ~36 fps median, up to 60, at 720p stock clocks |
 | Audio | works, latent |
-| Known regression | the newest build (SDL 3.4.10) dropped to 0.6–7.5 FPS. Build with `MELEE_SDL_VARIANT=legacy` until that is resolved |
-| Rendering | can drop geometry while a shader pipeline is still compiling |
+| Rendering | can briefly drop geometry while a shader pipeline is still compiling |
+| Load transitions | occasional multi-second hitch while streaming assets |
 
 Performance investigation notes live in `docs/`. They are working documents for
 contributors, not user documentation.
@@ -64,11 +64,13 @@ bash builder/fetch-deps.sh              # clone pinned reference sources
 export MESA_NVK_ROOT=/path/to/mesa      # see BUILDING.md — this one is manual
 bash builder/docker.sh image            # build the container
 bash builder/docker.sh graphics all     # Dawn + SDL3 (slow, once)
-bash builder/docker.sh melee configure
-bash builder/docker.sh melee build
+bash builder/docker.sh melee all        # apply game patches, configure, build
 ```
 
 Output: `build/switch/melee.nro`.
+
+For repeatable hardware comparisons and optional affinity experiments, see
+[PERFORMANCE.md](PERFORMANCE.md).
 
 Everything compiles inside a Docker container defined in
 `switch/docker/Dockerfile`, so Docker and git are the only host requirements.

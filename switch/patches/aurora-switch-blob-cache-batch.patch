@@ -1,0 +1,323 @@
+diff --git a/include/aurora/aurora.h b/include/aurora/aurora.h
+--- a/include/aurora/aurora.h
++++ b/include/aurora/aurora.h
+@@ -142,6 +142,10 @@
+  *  game: with nothing drawing, a cleared framebuffer presents as black. */
+ void aurora_preserve_frame_buffer(bool preserve);
+ /** Sets the clock timescale. Default 1.0f. 0.0f is paused. Range 0.0f-16.0f. */
++/** Commits anything the derived caches have buffered but not written.
++ *  Safe to call at any time; intended for hosts whose process teardown skips
++ *  destructors (Nintendo Switch). */
++void aurora_flush_caches(void);
+ void aurora_set_timescale(float scale);
+ 
+ AuroraBackend aurora_get_backend();
+diff --git a/lib/webgpu/gpu.hpp b/lib/webgpu/gpu.hpp
+--- a/lib/webgpu/gpu.hpp
++++ b/lib/webgpu/gpu.hpp
+@@ -76,6 +76,8 @@
+ size_t load_from_cache(void const* key, size_t keySize, void* value, size_t valueSize, void* userdata);
+ void store_to_cache(void const* key, size_t keySize, void const* value, size_t valueSize, void* userdata);
+ void cache_prune();
++// Commit blobs store_to_cache has buffered but not yet written.
++void cache_flush();
+ void cache_shutdown();
+ 
+ } // namespace aurora::webgpu
+diff --git a/lib/webgpu/gpu_cache.cpp b/lib/webgpu/gpu_cache.cpp
+--- a/lib/webgpu/gpu_cache.cpp
++++ b/lib/webgpu/gpu_cache.cpp
+@@ -1,3 +1,4 @@
++#include <cstdio>
+ #include <cstring>
+ #include <cstdint>
+ #include <mutex>
+@@ -30,6 +31,32 @@
+ #if defined(AURORA_CACHE_USE_ZSTD)
+ static std::vector<uint8_t> compress_buffer;
+ #endif
++
++// Dawn calls the store callback once per blob it produces -- several per
++// pipeline -- and this used to open, journal and commit a separate SQLite
++// transaction for each one. On Horizon that is a rollback-journal create,
++// two fsync-equivalents and a journal delete against the SD card, per blob,
++// on the shader-compilation thread. With a 6,000-entry pipeline seed to warm
++// it is thousands of SD-card commits competing with the game's own file I/O,
++// and it is why enabling this cache at all made the port slower than leaving
++// it broken.
++//
++// Buffer the blobs and commit them in batches instead. Reads consult the
++// buffer first so a store followed immediately by a load still hits -- Dawn
++// does exactly that for shader modules shared between pipelines, and missing
++// there would cost a recompile, which is far more expensive than the scan.
++struct PendingCacheWrite {
++  XXH128_hash_t key;
++  std::vector<uint8_t> stored;  // possibly zstd-compressed
++  uint64_t originalSize = 0;
++  int compressed = 0;
++};
++static std::vector<PendingCacheWrite> pending_writes;
++static size_t pending_write_bytes = 0;
++// Small enough that the linear lookup below stays trivial and a crash loses
++// little, large enough to amortise the journal cost by ~2 orders of magnitude.
++constexpr size_t MaxPendingCacheWrites = 64;
++constexpr size_t MaxPendingCacheBytes = 4ull * 1024 * 1024;
+ 
+ constexpr int CACHE_SCHEMA = 2;
+ // % of rows pruned to trigger a full VACUUM
+@@ -110,8 +137,12 @@
+     return false;
+   }
+ 
+-  // WAL mode + NORMAL = no need for disk syncs, consistent but not durable is fine.
++  // WAL mode + NORMAL on desktop; DELETE + NORMAL on Switch (native HOS VFS).
++#if defined(__SWITCH__)
++  ret = sqlite::exec(db, "PRAGMA journal_mode=DELETE; PRAGMA synchronous=NORMAL;");
++#else
+   ret = sqlite::exec(db, "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
++#endif
+   if (ret != SQLITE_OK) {
+     Log.error("Failed to set pragmas: {}", sqlite3_errmsg(db));
+     return false;
+@@ -200,6 +231,33 @@
+   return true;
+ }
+ 
++// The dawn cache is derived data: everything in it can be recompiled. Until
++// now a single torn write disabled it permanently, because every later launch
++// failed the same PRAGMA and set cache_broken -- so every pipeline was compiled
++// from scratch on first use, forever. Move the unreadable file aside once and
++// start a fresh database instead. The bad copy is kept for diagnosis, not
++// silently deleted.
++static bool quarantine_cache_file() {
++  const auto path = io::fs_path_to_string(cache_path());
++  const auto bad = path + ".corrupt";
++  const auto journal = path + "-journal";
++
++  std::remove(bad.c_str());
++  if (std::rename(path.c_str(), bad.c_str()) != 0) {
++    if (std::remove(path.c_str()) != 0) {
++      Log.error("Failed to quarantine unreadable dawn cache at '{}'", path);
++      return false;
++    }
++    Log.warn("Deleted unreadable dawn cache '{}' (could not rename it aside)", path);
++  } else {
++    Log.warn("Quarantined unreadable dawn cache to '{}'; rebuilding", bad);
++  }
++  // The rollback journal describes the file that just moved; it must not be
++  // replayed into the replacement.
++  std::remove(journal.c_str());
++  return true;
++}
++
+ static bool cache_init() {
+   if (cache_broken) {
+     return false;
+@@ -209,15 +267,81 @@
+     return true;
+   }
+ 
+-  if (!cache_init_core()) {
+-    Log.error("SQLite DB init failed");
++  if (cache_init_core()) {
++    Log.debug("SQLite cache init succeeded");
++    return true;
++  }
++
++  Log.error("SQLite DB init failed");
++  // Drop the handle before touching the file, then try exactly once more on a
++  // clean database. A second failure is not a corrupt file -- it is the cache
++  // path itself -- so stop rather than churn the SD card every call.
++  sqlite3_close(db);
++  db = nullptr;
++  if (!quarantine_cache_file() || !cache_init_core()) {
+     init_abort();
+     return false;
+   }
+ 
+-  Log.debug("SQLite cache init succeeded");
+-
++  Log.info("SQLite cache init succeeded after rebuild");
+   return true;
++}
++
++// Commit every buffered blob in one transaction. Caller holds cache_mutex.
++static bool flush_pending_writes_locked() {
++  if (pending_writes.empty()) {
++    return true;
++  }
++  // Whatever happens below, do not keep retrying the same batch: these are
++  // derived blobs and dropping them only costs a recompile later.
++  struct Clear {
++    ~Clear() {
++      pending_writes.clear();
++      pending_write_bytes = 0;
++    }
++  } clearOnExit;
++
++  if (!cache_init()) {
++    return false;
++  }
++
++  sqlite::Transaction tx(db, Log, true);
++  if (!tx) {
++    Log.error("Failed to open batched store transaction");
++    return false;
++  }
++
++  for (const auto& write : pending_writes) {
++    check(sqlite3_bind_blob64(store_stmt, 1, &write.key, sizeof(write.key), SQLITE_TRANSIENT));
++    check(sqlite3_bind_blob64(store_stmt, 2, write.stored.data(), write.stored.size(), SQLITE_STATIC));
++    check(sqlite3_bind_int64(store_stmt, 3, static_cast<sqlite3_int64>(write.originalSize)));
++    check(sqlite3_bind_int(store_stmt, 4, write.compressed));
++    const auto ret = sqlite3_step(store_stmt);
++    sqlite3_reset(store_stmt);
++    if (ret != SQLITE_DONE) {
++      Log.error("Failed to insert cache row: {}", sqlite3_errmsg(db));
++      return false;
++    }
++  }
++  check(sqlite3_clear_bindings(store_stmt));
++
++  tx.commit();
++  return true;
++}
++
++void cache_flush() {
++  std::lock_guard lock(cache_mutex);
++  flush_pending_writes_locked();
++}
++
++// Most recent write for this key, or nullptr. Caller holds cache_mutex.
++static const PendingCacheWrite* find_pending_write(const XXH128_hash_t& key) {
++  for (auto it = pending_writes.rbegin(); it != pending_writes.rend(); ++it) {
++    if (it->key.low64 == key.low64 && it->key.high64 == key.high64) {
++      return &*it;
++    }
++  }
++  return nullptr;
+ }
+ 
+ size_t load_from_cache(void const* key, size_t keySize, void* value, size_t valueSize, void*) {
+@@ -225,6 +349,33 @@
+ 
+   if (!cache_init()) {
+     return 0;
++  }
++
++  const auto keyHash = XXH128(key, keySize, 0);
++
++  // Not yet committed, but just as valid as a row. Dawn queries size with a
++  // null value buffer and then loads, so both calls have to see this.
++  if (const auto* pendingWrite = find_pending_write(keyHash)) {
++    const size_t foundSize = static_cast<size_t>(pendingWrite->originalSize);
++    if (value == nullptr || valueSize != foundSize) {
++      return foundSize;
++    }
++    if (pendingWrite->compressed != 0) {
++#if defined(AURORA_CACHE_USE_ZSTD)
++      const auto zstdRet = ZSTD_decompress(value, valueSize, pendingWrite->stored.data(), pendingWrite->stored.size());
++      if (ZSTD_isError(zstdRet) || zstdRet != foundSize) {
++        Log.error("zstd decompression of pending cache entry failed");
++        return 0;
++      }
++#else
++      Log.error("Pending cache entry is zstd-compressed but zstd support is disabled");
++      return 0;
++#endif
++    } else if (foundSize != 0) {
++      std::memcpy(value, pendingWrite->stored.data(), foundSize);
++    }
++    cache_keys_used.push_back(keyHash);
++    return foundSize;
+   }
+ 
+   sqlite::Transaction tx(db, Log);
+@@ -233,7 +384,6 @@
+     return 0;
+   }
+ 
+-  const auto keyHash = XXH128(key, keySize, 0);
+   check(sqlite3_bind_blob(load_stmt, 1, &keyHash, sizeof(keyHash), SQLITE_TRANSIENT));
+ 
+   const auto ret = sqlite3_step(load_stmt);
+@@ -299,14 +449,8 @@
+     return;
+   }
+ 
+-  sqlite::Transaction tx(db, Log, true);
+-  if (!tx) {
+-    Log.error("Failed to open store transaction");
+-    return;
+-  }
+-
+   const void* storedValue = value;
+-  sqlite3_uint64 storedValueSize = valueSize;
++  size_t storedValueSize = valueSize;
+   int compressed = 0;
+ #if defined(AURORA_CACHE_USE_ZSTD)
+   const auto bound = ZSTD_compressBound(valueSize);
+@@ -333,25 +477,24 @@
+ #endif
+ 
+   const auto keyHash = XXH128(key, keySize, 0);
+-  check(sqlite3_bind_blob64(store_stmt, 1, &keyHash, sizeof(keyHash), SQLITE_TRANSIENT));
+-  check(
+-      sqlite3_bind_blob64(store_stmt, 2, storedValue, storedValueSize, compressed ? SQLITE_STATIC : SQLITE_TRANSIENT));
+-  check(sqlite3_bind_int64(store_stmt, 3, static_cast<sqlite3_int64>(valueSize)));
+-  check(sqlite3_bind_int(store_stmt, 4, compressed));
+-
+-  const auto ret = sqlite3_step(store_stmt);
+-  if (ret != SQLITE_DONE) {
+-    // Error or something
+-    Log.error("Failed to insert row: {}", sqlite3_errmsg(db));
+-    return;
+-  }
+-
+-  check(sqlite3_reset(store_stmt));
+-  check(sqlite3_bind_null(store_stmt, 2));
+-  check(sqlite3_bind_null(store_stmt, 4));
+-
+-  tx.commit();
++
++  // Buffered, not committed -- see PendingCacheWrite. The copy is unavoidable
++  // because compress_buffer is reused by the next call and Dawn's `value` is
++  // only valid for the duration of this callback.
++  PendingCacheWrite write;
++  write.key = keyHash;
++  write.originalSize = valueSize;
++  write.compressed = compressed;
++  const auto* bytes = static_cast<const uint8_t*>(storedValue);
++  write.stored.assign(bytes, bytes + storedValueSize);
++
++  pending_write_bytes += storedValueSize;
++  pending_writes.push_back(std::move(write));
+   cache_keys_used.push_back(keyHash);
++
++  if (pending_writes.size() >= MaxPendingCacheWrites || pending_write_bytes >= MaxPendingCacheBytes) {
++    flush_pending_writes_locked();
++  }
+ }
+ 
+ void cache_prune() {
+@@ -359,6 +502,9 @@
+   if (!cache_init()) {
+     return;
+   }
++  // A prune deletes every row not in cache_keys_used; buffered writes are
++  // exactly the rows most worth keeping, so they must land first.
++  flush_pending_writes_locked();
+   if (cache_keys_used.empty()) {
+     Log.warn("Skipping Dawn cache prune because no cache keys were used");
+     return;
+@@ -418,6 +564,10 @@
+ }
+ 
+ void cache_shutdown() {
++  {
++    std::lock_guard lock(cache_mutex);
++    flush_pending_writes_locked();
++  }
+ #if defined(AURORA_CACHE_USE_ZSTD)
+   compress_buffer.clear();
+ #endif

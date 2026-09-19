@@ -1,8 +1,7 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 054ec2c..7e5040b 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -3316,6 +3316,7 @@ elseif(N3DS)
+@@ -3316,6 +3316,7 @@
    )
  
  elseif(SWITCH)
@@ -10,7 +9,7 @@ index 054ec2c..7e5040b 100644
    # Nintendo Switch homebrew (libnx / devkitPro). Private fork backend.
    # The devkitA64 toolchain does not predefine __SWITCH__, so add it here.
    sdl_compile_definitions(PUBLIC "__SWITCH__")
-@@ -3366,8 +3367,10 @@ elseif(SWITCH)
+@@ -3366,8 +3367,10 @@
  
    if(SDL_VIDEO)
      set(SDL_VIDEO_DRIVER_SWITCH 1)
@@ -24,10 +23,9 @@ index 054ec2c..7e5040b 100644
        "${SDL3_SOURCE_DIR}/src/video/switch/*.c"
        "${SDL3_SOURCE_DIR}/src/video/switch/*.h"
 diff --git a/src/audio/switch/SDL_switchaudio.c b/src/audio/switch/SDL_switchaudio.c
-index 29f1748..1c5fb7b 100644
 --- a/src/audio/switch/SDL_switchaudio.c
 +++ b/src/audio/switch/SDL_switchaudio.c
-@@ -56,13 +56,15 @@ SWITCHAUDIO_OpenDevice(SDL_AudioDevice *device)
+@@ -56,13 +56,15 @@
  
      res = audrenInitialize(&arConfig);
      if (R_FAILED(res)) {
@@ -45,17 +43,18 @@ index 29f1748..1c5fb7b 100644
      }
      device->hidden->audr_driver = true;
  
-@@ -92,16 +94,27 @@ SWITCHAUDIO_OpenDevice(SDL_AudioDevice *device)
+@@ -92,16 +94,27 @@
      }
  
      mpid = audrvMemPoolAdd(&device->hidden->driver, device->hidden->pool, aligned);
 -    audrvMemPoolAttach(&device->hidden->driver, mpid);
+-
+-    audrvDeviceSinkAdd(&device->hidden->driver, AUDREN_DEFAULT_DEVICE_NAME, 2, sink_channels);
 +    if (mpid < 0 || !audrvMemPoolAttach(&device->hidden->driver, mpid)) {
 +        SDL_SetError("audrvMemPoolAdd/Attach failed");
 +        goto failed;
 +    }
- 
--    audrvDeviceSinkAdd(&device->hidden->driver, AUDREN_DEFAULT_DEVICE_NAME, 2, sink_channels);
++
 +    if (audrvDeviceSinkAdd(&device->hidden->driver, AUDREN_DEFAULT_DEVICE_NAME, 2, sink_channels) < 0) {
 +        SDL_SetError("audrvDeviceSinkAdd failed");
 +        goto failed;
@@ -64,12 +63,14 @@ index 29f1748..1c5fb7b 100644
      res = audrenStartAudioRenderer();
      if (R_FAILED(res)) {
 -        return SDL_SetError("audrenStartAudioRenderer failed");
+-    }
+-
+-    audrvVoiceInit(&device->hidden->driver, 0, device->spec.channels, PcmFormat_Int16, device->spec.freq);
 +        SDL_SetError("audrenStartAudioRenderer failed: 0x%x", res);
 +        goto failed;
-     }
++    }
 +    device->hidden->audr_started = true;
- 
--    audrvVoiceInit(&device->hidden->driver, 0, device->spec.channels, PcmFormat_Int16, device->spec.freq);
++
 +    if (!audrvVoiceInit(&device->hidden->driver, 0, device->spec.channels, PcmFormat_Int16, device->spec.freq)) {
 +        SDL_SetError("audrvVoiceInit failed");
 +        goto failed;
@@ -77,7 +78,7 @@ index 29f1748..1c5fb7b 100644
      audrvVoiceSetDestinationMix(&device->hidden->driver, 0, AUDREN_FINAL_MIX_ID);
      if (device->spec.channels == 1) {
          audrvVoiceSetMixFactor(&device->hidden->driver, 0, 1.0f, 0, 0);
-@@ -118,6 +131,10 @@ SWITCHAUDIO_OpenDevice(SDL_AudioDevice *device)
+@@ -118,6 +131,10 @@
  
      return true;
  failed:
@@ -88,7 +89,7 @@ index 29f1748..1c5fb7b 100644
      if (device->hidden->buffer_tmp) {
          SDL_free(device->hidden->buffer_tmp);
          device->hidden->buffer_tmp = NULL;
-@@ -140,7 +157,9 @@ failed:
+@@ -140,7 +157,9 @@
  static bool
  SWITCHAUDIO_PlayDevice(SDL_AudioDevice *device, const Uint8 *buffer, int buflen)
  {
@@ -99,7 +100,7 @@ index 29f1748..1c5fb7b 100644
      int current = -1;
      for (int i = 0; i < NUM_AUDIO_BUFFERS; i++) {
          if (device->hidden->buffer[i].state == AudioDriverWaveBufState_Free
-@@ -151,16 +170,24 @@ SWITCHAUDIO_PlayDevice(SDL_AudioDevice *device, const Uint8 *buffer, int buflen)
+@@ -151,16 +170,24 @@
      }
  
      if (current >= 0) {
@@ -128,7 +129,7 @@ index 29f1748..1c5fb7b 100644
  
      if (current >= 0) {
          while (device->hidden->buffer[current].state != AudioDriverWaveBufState_Playing) {
-@@ -219,6 +246,11 @@ SWITCHAUDIO_CloseDevice(SDL_AudioDevice *device)
+@@ -219,6 +246,11 @@
          return;
      }
  
@@ -141,10 +142,9 @@ index 29f1748..1c5fb7b 100644
          audrvClose(&device->hidden->driver);
      }
 diff --git a/src/audio/switch/SDL_switchaudio.h b/src/audio/switch/SDL_switchaudio.h
-index 4c72670..ad3cecd 100644
 --- a/src/audio/switch/SDL_switchaudio.h
 +++ b/src/audio/switch/SDL_switchaudio.h
-@@ -35,6 +35,7 @@ struct SDL_PrivateAudioData
+@@ -35,6 +35,7 @@
      void *pool;
      bool audr_device;
      bool audr_driver;
@@ -153,16 +153,16 @@ index 4c72670..ad3cecd 100644
  
  #endif /* SDL_switchaudio_h_ */
 diff --git a/src/joystick/switch/SDL_sysjoystick.c b/src/joystick/switch/SDL_sysjoystick.c
-index 9687150..1cd0995 100644
 --- a/src/joystick/switch/SDL_sysjoystick.c
 +++ b/src/joystick/switch/SDL_sysjoystick.c
-@@ -49,24 +49,87 @@ static const u64 button_map[] = {
+@@ -49,24 +49,87 @@
      HidNpadButton_Right,  // 15
  };
  #define NB_BUTTONS ((int)SDL_arraysize(button_map))
-+#define SWITCH_MAX_PLAYERS 4
- 
+-
 -static PadState g_pad;
++#define SWITCH_MAX_PLAYERS 4
++
 +struct joystick_hwdata
 +{
 +    int slot;
@@ -249,7 +249,7 @@ index 9687150..1cd0995 100644
  }
  
  static bool SWITCH_JoystickIsDevicePresent(Uint16 vendor_id, Uint16 product_id, Uint16 version, const char *name)
-@@ -91,7 +154,7 @@ static int SWITCH_JoystickGetDeviceSteamVirtualGamepadSlot(int device_index)
+@@ -91,7 +154,7 @@
  
  static int SWITCH_JoystickGetDevicePlayerIndex(int device_index)
  {
@@ -258,7 +258,7 @@ index 9687150..1cd0995 100644
  }
  
  static void SWITCH_JoystickSetDevicePlayerIndex(int device_index, int player_index)
-@@ -100,18 +163,30 @@ static void SWITCH_JoystickSetDevicePlayerIndex(int device_index, int player_ind
+@@ -100,18 +163,30 @@
  
  static SDL_GUID SWITCH_JoystickGetDeviceGUID(int device_index)
  {
@@ -291,7 +291,7 @@ index 9687150..1cd0995 100644
      joystick->nhats = 0;
      return true;
  }
-@@ -153,13 +228,21 @@ static Sint16 clamp_axis(int v)
+@@ -153,13 +228,21 @@
  
  static void SWITCH_JoystickUpdate(SDL_Joystick *joystick)
  {
@@ -305,27 +305,29 @@ index 9687150..1cd0995 100644
      Uint64 timestamp = SDL_GetTicksNS();
  
 -    padUpdate(&g_pad);
+-
+-    u64 held = padGetButtons(&g_pad);
+-    u64 changed = held ^ previous;
 +    padUpdate(pad);
 +    if (!padIsConnected(pad)) {
 +        return;
 +    }
- 
--    u64 held = padGetButtons(&g_pad);
--    u64 changed = held ^ previous;
++
 +    u64 held = padGetButtons(pad);
 +    u64 changed = held ^ joystick->hwdata->previous_buttons;
      if (changed) {
          for (int i = 0; i < NB_BUTTONS; i++) {
              if (changed & button_map[i]) {
-@@ -168,18 +251,28 @@ static void SWITCH_JoystickUpdate(SDL_Joystick *joystick)
+@@ -168,18 +251,28 @@
              }
          }
      }
 -    previous = held;
-+    joystick->hwdata->previous_buttons = held;
- 
+-
 -    HidAnalogStickState l = padGetStickPos(&g_pad, 0);
 -    HidAnalogStickState r = padGetStickPos(&g_pad, 1);
++    joystick->hwdata->previous_buttons = held;
++
 +    HidAnalogStickState l = padGetStickPos(pad, 0);
 +    HidAnalogStickState r = padGetStickPos(pad, 1);
      SDL_SendJoystickAxis(timestamp, joystick, 0, clamp_axis(l.x));
@@ -349,7 +351,7 @@ index 9687150..1cd0995 100644
  }
  
  static void SWITCH_JoystickQuit(void)
-@@ -194,8 +287,8 @@ static bool SWITCH_JoystickGetGamepadMapping(int device_index, SDL_GamepadMappin
+@@ -194,8 +287,8 @@
      out->y = (SDL_InputMapping){ EMappingKind_Button, 3 };
      out->leftshoulder = (SDL_InputMapping){ EMappingKind_Button, 6 };
      out->rightshoulder = (SDL_InputMapping){ EMappingKind_Button, 7 };
@@ -360,11 +362,127 @@ index 9687150..1cd0995 100644
      out->back = (SDL_InputMapping){ EMappingKind_Button, 8 };
      out->start = (SDL_InputMapping){ EMappingKind_Button, 9 };
      out->leftstick = (SDL_InputMapping){ EMappingKind_Button, 10 };
+diff --git a/src/thread/pthread/SDL_systhread.c b/src/thread/pthread/SDL_systhread.c
+--- a/src/thread/pthread/SDL_systhread.c
++++ b/src/thread/pthread/SDL_systhread.c
+@@ -55,6 +55,10 @@
+ 
+ #ifdef SDL_PLATFORM_HAIKU
+ #include <kernel/OS.h>
++#endif
++
++#ifdef SDL_PLATFORM_SWITCH
++#include <switch.h>
+ #endif
+ 
+ #ifdef HAVE_SIGNAL_H
+@@ -187,8 +191,69 @@
+ 
+ bool SDL_SYS_SetThreadPriority(SDL_ThreadPriority priority)
+ {
+-#if defined(SDL_PLATFORM_RISCOS) || defined(SDL_PLATFORM_SWITCH)
+-    // RISC OS / Switch (libnx): pthread scheduler priority APIs are unavailable
++#if defined(SDL_PLATFORM_SWITCH)
++    /* devkitA64's pthread_setschedparam is ENOSYS, so this used to return true
++     * and do nothing -- every thread in the process, including background
++     * shader compilers, ran at exactly the main thread's priority and competed
++     * with it for the three cores Horizon gives an application. Go to the
++     * kernel directly instead.
++     *
++     * Horizon priorities are inverted: 0 is the highest, 0x3F the lowest, and
++     * an application may only move a thread within the band its process was
++     * granted, so the result is clamped rather than assumed.
++     *
++     * Offsets are relative to the MAIN thread's priority, not this thread's.
++     * Anchoring on self would drift: this is called repeatedly on the same
++     * thread (aurora's shader compiler moves between background and on-demand
++     * work), and each Low would subtract from the last. The main thread's
++     * priority is stable for the life of the process, which also keeps the
++     * offsets correct under hbloader's applet takeover and a title takeover
++     * alike instead of hardcoding 0x2C. */
++    s32 base = 0;
++    if (R_FAILED(svcGetThreadPriority(&base, envGetMainThreadHandle())) &&
++        R_FAILED(svcGetThreadPriority(&base, CUR_THREAD_HANDLE))) {
++        return true; /* Nothing to anchor on; leave the thread where it is. */
++    }
++
++    s32 current = 0;
++    if (R_FAILED(svcGetThreadPriority(&current, CUR_THREAD_HANDLE))) {
++        current = base;
++    }
++
++    int delta;
++    switch (priority) {
++    case SDL_THREAD_PRIORITY_LOW:
++        delta = +8; /* Spare time only. */
++        break;
++    case SDL_THREAD_PRIORITY_HIGH:
++        delta = -4;
++        break;
++    case SDL_THREAD_PRIORITY_TIME_CRITICAL:
++        delta = -8;
++        break;
++    case SDL_THREAD_PRIORITY_NORMAL:
++    default:
++        delta = 0;
++        break;
++    }
++
++    int target = (int)base + delta;
++    if (target < 0x1C) {
++        target = 0x1C;
++    } else if (target > 0x3B) {
++        target = 0x3B;
++    }
++    if ((u32)target == current) {
++        return true;
++    }
++    if (R_FAILED(svcSetThreadPriority(CUR_THREAD_HANDLE, (u32)target))) {
++        /* Outside the process's granted band. Not fatal: the thread simply
++         * keeps the priority it had. */
++        return true;
++    }
++    return true;
++#elif defined(SDL_PLATFORM_RISCOS)
++    // RISC OS: pthread scheduler priority APIs are unavailable
+     return true;
+ #else
+     struct sched_param sched;
 diff --git a/src/video/switch/SDL_switchvideo.c b/src/video/switch/SDL_switchvideo.c
-index 156ce0a..07f661c 100644
 --- a/src/video/switch/SDL_switchvideo.c
 +++ b/src/video/switch/SDL_switchvideo.c
-@@ -55,6 +55,8 @@ static void SWITCH_GetDisplaySize(int *w, int *h)
+@@ -40,9 +40,29 @@
+ #define SWITCH_MODE_POLL_MS 500
+ 
+ // Size of the single fullscreen surface for the current operation mode.
++//
++// Docked 1080p is 2.25x the pixels of handheld 720p, and on the Tegra X1 that
++// is not a trade a GPU-limited title can absorb -- SDL's own long-standing
++// Switch backend hardcodes 1280x720 with a comment saying 720p is advertised
++// deliberately for exactly this reason. Honouring the real operation mode here
++// silently doubled melee-nx's render target the first time this backend was
++// used and cost most of the frame rate.
++//
++// Default to 720p in both modes; Horizon scales it to the TV. MELEE_DOCKED_1080P=1
++// opts back in for anyone with the headroom to spend.
++static bool SWITCH_WantDocked1080p(void)
++{
++    static int cached = -1;
++    if (cached < 0) {
++        const char *env = SDL_getenv("MELEE_DOCKED_1080P");
++        cached = (env != NULL && *env != '\0' && *env != '0') ? 1 : 0;
++    }
++    return cached != 0;
++}
++
+ static void SWITCH_GetDisplaySize(int *w, int *h)
+ {
+-    if (appletGetOperationMode() == AppletOperationMode_Console) {
++    if (SWITCH_WantDocked1080p() && appletGetOperationMode() == AppletOperationMode_Console) {
+         *w = SWITCH_SCREEN_W_DOCKED;
+         *h = SWITCH_SCREEN_H_DOCKED;
+     } else {
+@@ -55,6 +75,8 @@
  // EGL / OpenGL ES backed by libnx's default NWindow and switch-mesa.
  // ---------------------------------------------------------------------------
  
@@ -373,7 +491,7 @@ index 156ce0a..07f661c 100644
  static bool SWITCH_GL_LoadLibrary(SDL_VideoDevice *_this, const char *path)
  {
      // EGL/GLESv2 are statically linked from the portlibs; nothing to dlopen.
-@@ -212,6 +214,7 @@ static bool SWITCH_GL_DestroyContext(SDL_VideoDevice *_this, SDL_GLContext conte
+@@ -212,6 +234,7 @@
      v->egl_initialized = false;
      return true;
  }
@@ -381,7 +499,7 @@ index 156ce0a..07f661c 100644
  
  // ---------------------------------------------------------------------------
  // Display / window management
-@@ -349,9 +352,11 @@ static SDL_VideoDevice *SWITCH_CreateDevice(void)
+@@ -349,9 +372,11 @@
          SDL_free(device);
          return NULL;
      }
@@ -393,7 +511,7 @@ index 156ce0a..07f661c 100644
      device->internal = data;
  
      device->VideoInit = SWITCH_VideoInit;
-@@ -360,6 +365,7 @@ static SDL_VideoDevice *SWITCH_CreateDevice(void)
+@@ -360,6 +385,7 @@
      device->DestroyWindow = SWITCH_DestroyWindow;
      device->PumpEvents = SWITCH_PumpEvents;
  
@@ -401,7 +519,7 @@ index 156ce0a..07f661c 100644
      device->GL_LoadLibrary = SWITCH_GL_LoadLibrary;
      device->GL_GetProcAddress = SWITCH_GL_GetProcAddress;
      device->GL_UnloadLibrary = SWITCH_GL_UnloadLibrary;
-@@ -369,6 +375,7 @@ static SDL_VideoDevice *SWITCH_CreateDevice(void)
+@@ -369,6 +395,7 @@
      device->GL_GetSwapInterval = SWITCH_GL_GetSwapInterval;
      device->GL_SwapWindow = SWITCH_GL_SwapWindow;
      device->GL_DestroyContext = SWITCH_GL_DestroyContext;
@@ -410,7 +528,6 @@ index 156ce0a..07f661c 100644
      device->device_caps = VIDEO_DEVICE_CAPS_FULLSCREEN_ONLY;
  
 diff --git a/src/video/switch/SDL_switchvideo.h b/src/video/switch/SDL_switchvideo.h
-index b572651..0cddd45 100644
 --- a/src/video/switch/SDL_switchvideo.h
 +++ b/src/video/switch/SDL_switchvideo.h
 @@ -24,18 +24,22 @@

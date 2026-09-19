@@ -1,5 +1,10 @@
 # Dependency acquisition
 
+> Current patch and hardware state: [HANDOFF-PERF-SWEEP.md](HANDOFF-PERF-SWEEP.md).
+> The historical patch overlap described later is resolved. Use graphics
+> preparation followed by `builder/docker.sh melee all`; it applies game patches
+> before configuring. The old deployment hashes below are historical.
+
 > **For the end-user build guide, see [../BUILDING.md](../BUILDING.md).** That
 > file is the tracked, user-facing document; this one records exact revisions,
 > provenance and the dev-machine shortcuts. `builder/fetch-deps.sh` automates

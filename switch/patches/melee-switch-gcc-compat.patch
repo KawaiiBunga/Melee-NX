@@ -1,77 +1,142 @@
-﻿diff --git a/src/pc/disc.h b/src/pc/disc.h
-index eccb10f..0e16351 100644
---- a/src/pc/disc.h
-+++ b/src/pc/disc.h
-@@ -49,9 +49,42 @@ uint32_t pc_register_ext_ptr(const void* p);
- void* pc_resolve_ext_ptr(uint32_t id);
- void pc_disc_ptr_overflow(const void* p, const char* file, int line) __attribute__((noreturn));
+diff --git a/resources/fps.rml b/resources/fps.rml
+--- a/resources/fps.rml
++++ b/resources/fps.rml
+@@ -1 +1 @@
+-<rml><head><title>FPS</title><style>body { font-family: "Liberation Sans"; font-size: 16dp; color: #ffffff; background-color: #0b101cdd; position: absolute; top: 8dp; right: 8dp; width: 82dp; height: 24dp; padding: 5dp; pointer-events: none; z-index: 100; }</style></head><body><span id="count">FPS</span></body></rml>
++<rml><head><title>FPS</title><style>body { font-family: "Liberation Sans"; font-size: 14dp; color: #ffffff; background-color: #0b101cdd; position: absolute; top: 8dp; right: 8dp; min-width: 82dp; width: auto; height: auto; padding: 4dp 8dp; border-radius: 4dp; pointer-events: none; z-index: 100; white-space: nowrap; }</style></head><body><span id="count">FPS</span></body></rml>
+diff --git a/resources/port-menu.rml b/resources/port-menu.rml
+--- a/resources/port-menu.rml
++++ b/resources/port-menu.rml
+@@ -1,8 +1,8 @@
+ <rml><head><title>PC enhancements</title><link type="text/rcss" href="port-menu.rcss" /></head>
+ <body>
+-<div id="toolbar"><span class="wordmark">MELEE <span class="muted">/ PC</span></span><span class="toolbar-tab">SETTINGS</span><span class="toolbar-note">F1 TO CLOSE</span></div>
++<div id="toolbar"><span class="wordmark">MELEE <span class="muted">/ NX</span></span><span class="toolbar-tab">SETTINGS</span><span class="toolbar-note">- + R3 TO CLOSE</span></div>
+ <div id="window">
+-<div id="heading"><h1>PC settings</h1><span class="version"><span id="menu-version">v0.1.6-beta</span> · NTSC-U 1.02</span></div>
++<div id="heading"><h1>Melee NX settings</h1><span class="version"><span id="menu-version">v0.1.0-nx</span> · NTSC-U 1.02</span></div>
+ <div id="tabstrip"><button id="tab-graphics" class="tab">Graphics</button><button id="tab-audio" class="tab">Audio &amp; interface</button><button id="tab-cheats" class="tab">Cheats</button><button id="tab-controls" class="tab">Controls</button></div>
+ <div id="content">
+ <div id="page-graphics" class="page">
+@@ -27,7 +27,8 @@
+ <div class="setting"><div class="description"><h3>Music volume</h3><p>Background music volume.</p></div><div class="slider-control"><input type="range" id="music-volume" min="0" max="100" step="5" value="100" /><span id="music-volume-val" class="slider-value">100%</span></div></div>
+ <div class="setting"><div class="description"><h3>SFX volume</h3><p>Sound effects and combat audio volume.</p></div><div class="slider-control"><input type="range" id="sfx-volume" min="0" max="100" step="5" value="100" /><span id="sfx-volume-val" class="slider-value">100%</span></div></div>
+ <div class="setting"><div class="description"><h3>Mute audio</h3></div><button id="mute">Mute</button></div>
+-<div class="setting"><div class="description"><h3>Performance display</h3></div><button id="fps">FPS counter</button></div>
++<div class="setting"><div class="description"><h3>Performance display</h3><p>Off, FPS counter, or full realtime profiler overlay.</p></div><button id="fps">FPS counter</button></div>
++<div class="setting"><div class="description"><h3>Live performance</h3><p id="profiler-live-stats">FPS: -- | Sim: -- | Submit: -- | Wait: --</p></div></div>
+ <div class="setting"><div class="description"><h3>UI scale</h3><p>Scale launcher and overlay elements.</p></div><div class="slider-control"><input type="range" id="scale" min="75" max="150" step="25" value="100" /><span id="scale-val" class="slider-value">100%</span></div></div>
+ <div class="setting"><div class="description"><h3>Check for updates</h3><p id="port-update-status">Up to date</p></div><button id="port-check-update">Check now</button></div>
+ </div>
+@@ -61,6 +62,6 @@
+ </div>
+ </div>
+ <div id="bottom"><p id="menu-status">Saved automatically.</p><button id="resume">Return to game</button></div>
+-<div id="hints">ARROWS / D-PAD Navigate <span>ENTER / A Select</span><span>ESC / B / F1 Close</span><span>BACK Opens this menu</span></div>
++<div id="hints">ARROWS / D-PAD Navigate <span>A Select</span><span>B / - + R3 Close</span><span>- + R3 Opens this menu</span></div>
+ </div>
+ </body></rml>
+diff --git a/src/pc/audio.c b/src/pc/audio.c
+--- a/src/pc/audio.c
++++ b/src/pc/audio.c
+@@ -461,8 +461,10 @@
+     }
  
-+/* MEM1's 4GB window.
-+ *
-+ * Hosts that can place MEM1 below 4GB leave these zero, the window is off, and
-+ * a slot is a plain host address exactly as before. Horizon cannot: libnx maps
-+ * its heap far above 4GB (0x1f_63xx_xxxx on hardware) and there is no way to
-+ * ask for anything lower -- svcMapMemory only accepts a destination inside the
-+ * kernel's stack region, which a 39-bit address space places below 4GB
-+ * essentially never. So on Switch a slot instead means "offset inside whatever
-+ * 4GB window MEM1 landed in", and pc_resolve_dp puts the high half back.
-+ *
-+ * This is what keeps the raw 32-bit relocation arithmetic correct without
-+ * touching any of it -- HSD_ArchiveParse's Locate, axdriver's three table
-+ * fixups, particle.c's three -- because inside a single window only the low 32
-+ * bits ever differ. AllocMEM1 guarantees MEM1 does not straddle a boundary. */
-+extern uintptr_t pc_mem1_hi; /* MEM1 base, low 32 bits cleared */
-+extern uint32_t pc_mem1_lo;  /* MEM1 base, low 32 bits only */
-+extern uint32_t pc_mem1_len; /* MEM1 size; 0 disables the window */
-+
-+void pc_disc_set_mem1_window(const void* base, uint32_t size);
-+
-+/* Whether p is a host address a 32-bit slot can hold. With the window off this
-+ * is the original "fits in 32 bits" test. */
-+static inline int pc_dp_in_window(const void* p) {
-+    if (pc_mem1_len == 0) {
-+        return !((uintptr_t)p >> 32);
-+    }
-+    return ((uintptr_t)p & ~(uintptr_t)0xFFFFFFFFu) == pc_mem1_hi &&
-+           (uint32_t)(uintptr_t)p - pc_mem1_lo < pc_mem1_len;
-+}
-+
- static inline uint32_t pc_encode_dp(const void* p) {
-     if (!p)
-         return 0;
-+    if (pc_dp_in_window(p)) {
-+        return (uint32_t)(uintptr_t)p;
-+    }
-     if (!((uintptr_t)p >> 32)) {
-         return (uint32_t)(uintptr_t)p;
+     /* Fast path for ratio == 0x10000 with non-zero phase: phase remains constant throughout. */
++    const float inv_scale = (1.0f / 32768.0f) * (1.0f / 32767.0f);
++    const float inv_phase = 1.0f / 65536.0f;
+     if (ratio == 0x10000) {
+-        float t = (float)v->frac * (1.0f / 65536.0f);
++        float t = (float)v->frac * inv_phase;
+         for (int i = 0; i < AX_FRAME; i++) {
+             s16 s;
+             if (!next_sample(v, &s)) {
+@@ -473,9 +475,8 @@
+             }
+             v->prev = v->cur;
+             v->cur = s;
+-            float smp = ((float)v->prev + t * (float)(v->cur - v->prev)) * (1.0f / 32768.0f);
+-            float g = (float)vol * (1.0f / 32767.0f);
+-            float sv = smp * g;
++            float smp = (float)v->prev + t * (float)(v->cur - v->prev);
++            float sv = smp * (float)vol * inv_scale;
+             out[i * 2] += sv * vl;
+             out[i * 2 + 1] += sv * vr;
+             if (send_a) {
+@@ -506,33 +507,16 @@
+             if (!next_sample(v, &s)) {
+                 pb->state = 0;
+                 pb->ve.currentVolume = (u16)(vol < 0 ? 0 : vol > 32767 ? 32767 : vol);
+-                /* The mirror the game reads back has to follow on this path
+-                 * too: stopRange() matches a voice against the bank being
+-                 * unloaded by pb.addr.currentAddress, and the HPS block swap
+-                 * derives the stream position from it. Without this the
+-                 * field stayed at the previous frame's value, reporting the
+-                 * voice up to one frame short of where it really stopped. */
+                 set_addr(&pb->addr.currentAddressHi, &pb->addr.currentAddressLo, v->cur_addr);
+-                /* frac is deliberately left alone. It holds one whole
+-                 * unsatisfied sample step plus the sub-sample phase, and
+-                 * nothing at end-of-voice should discard that: on hardware
+-                 * the DSP's SRC phase survives an end too, and the reset
+-                 * arrives only with an explicit SRC block (AXSetVoiceSrc,
+-                 * which the HPS block swap does supply and which sets frac
+-                 * from currentAddressFrac). A voice restarted with only
+-                 * AXSetVoiceCurrentAddr therefore keeps its phase, and the
+-                 * retained whole step is what consumes the first sample of
+-                 * the new block instead of skipping it. */
+                 return;
+             }
+             v->prev = v->cur;
+             v->cur = s;
+             v->frac -= 0x10000;
+         }
+-        float t = (float)v->frac * (1.0f / 65536.0f);
+-        float s = ((float)v->prev + t * (float)(v->cur - v->prev)) * (1.0f / 32768.0f);
+-        float g = (float)vol * (1.0f / 32767.0f);
+-        float sv = s * g;
++        float t = (float)v->frac * inv_phase;
++        float smp = (float)v->prev + t * (float)(v->cur - v->prev);
++        float sv = smp * (float)vol * inv_scale;
+         out[i * 2] += sv * vl;
+         out[i * 2 + 1] += sv * vr;
+         if (send_a) {
+@@ -757,6 +741,23 @@
+             fprintf(stderr, "audio: SDL_OpenAudioDeviceStream failed: %s\n", SDL_GetError());
+             return;
+         }
++#if defined(__SWITCH__)
++        SDL_AudioSpec device_spec;
++        int device_frames = 0;
++        if (SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(s_stream), &device_spec, &device_frames)) {
++            pc_log_line("AUDIO driver %s device_hz %d format 0x%x channels %d frames %d mixer_hz %d neon %d",
++                        SDL_GetCurrentAudioDriver(), device_spec.freq, (unsigned)device_spec.format,
++                        device_spec.channels, device_frames, AX_RATE,
++#if defined(PC_AUDIO_SIMD_NEON)
++                        1
++#else
++                        0
++#endif
++            );
++        } else {
++            pc_log_line("AUDIO device format query failed: %s", SDL_GetError());
++        }
++#endif
+         SDL_ResumeAudioStreamDevice(s_stream);
      }
-@@ -62,6 +95,12 @@ static inline void* pc_resolve_dp(uint32_t slot) {
-     if ((slot & 0xFF000000u) == 0x02000000u) {
-         return pc_resolve_ext_ptr(slot & 0x00FFFFFFu);
-     }
-+    /* Only slots inside MEM1's window get the high half back. Anything else is
-+     * an ARAM offset -- the game tells those apart by being below 16MB, see
-+     * PC_IS_ARAM_ADDR -- and has to stay the small integer it already is. */
-+    if (pc_mem1_len != 0 && (uint32_t)(slot - pc_mem1_lo) < pc_mem1_len) {
-+        return (void*)(pc_mem1_hi | (uintptr_t)slot);
-+    }
-     return (void*)(uintptr_t)slot;
  }
- 
 diff --git a/src/pc/file_cache.cpp b/src/pc/file_cache.cpp
-index e4d79ec..c8b63b2 100644
 --- a/src/pc/file_cache.cpp
 +++ b/src/pc/file_cache.cpp
-@@ -25,6 +25,8 @@
+@@ -24,6 +24,8 @@
+ #include <dolphin/ar.h>
  #include <dolphin/dvd.h>
  #include <dolphin/os.h>
- 
-+#include "switch_io_lock.h"
 +
++#include "switch_io_lock.h"
+ 
  namespace {
  
- struct CachedEntry {
-@@ -188,6 +190,7 @@ bool preload_single_file(const char* name, int entryNum) {
+@@ -188,6 +190,7 @@
      // 1. Check if loose file exists
      std::string loose_path = resolve_loose_path(key.c_str());
      if (!loose_path.empty()) {
@@ -79,7 +144,7 @@ index e4d79ec..c8b63b2 100644
          struct stat st;
          if (stat(loose_path.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
              std::ifstream in(loose_path, std::ios::binary);
-@@ -312,6 +315,7 @@ bool pc_file_cache_get(const char* filename, void* dst, size_t* size) {
+@@ -312,6 +315,7 @@
      // Check loose file directory override
      std::string loose_path = resolve_loose_path(key.c_str());
      if (!loose_path.empty()) {
@@ -87,7 +152,7 @@ index e4d79ec..c8b63b2 100644
          struct stat st;
          if (stat(loose_path.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
              std::ifstream in(loose_path, std::ios::binary);
-@@ -353,6 +357,7 @@ bool pc_file_cache_get_size(const char* filename, size_t* size) {
+@@ -353,6 +357,7 @@
  
      std::string loose_path = resolve_loose_path(key.c_str());
      if (!loose_path.empty()) {
@@ -95,43 +160,10 @@ index e4d79ec..c8b63b2 100644
          struct stat st;
          if (stat(loose_path.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
              *size = static_cast<size_t>(st.st_size);
-diff --git a/src/pc/input_poll.c b/src/pc/input_poll.c
-index a721f75..26662ad 100644
---- a/src/pc/input_poll.c
-+++ b/src/pc/input_poll.c
-@@ -19,18 +19,26 @@ static int SDLCALL input_poll_worker(void* data) {
-     /* Request high thread priority so input sampling is immune to general CPU loads. */
-     SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_HIGH);
- 
-+#if defined(__SWITCH__)
-+    const uint64_t interval_ns = 4000000ull; /* 4.0 ms = 250 Hz */
-+#else
-     const uint64_t interval_ns = 1000000ull; /* 1.0 ms = 1000 Hz */
-+#endif
-     uint64_t next_tick = SDL_GetTicksNS();
- 
-     while (atomic_load_explicit(&s_poll_running, memory_order_relaxed)) {
--        /* Apply keyboard and touch virtual controller states every 1 ms */
-+        /* Apply keyboard and touch virtual controller states */
-         pc_keyboard_apply();
-         atomic_fetch_add_explicit(&s_poll_count, 1, memory_order_relaxed);
- 
-         next_tick += interval_ns;
-         const uint64_t now = SDL_GetTicksNS();
-         if (now < next_tick) {
-+#if defined(__SWITCH__)
-+            SDL_DelayNS(next_tick - now);
-+#else
-             SDL_DelayPrecise(next_tick - now);
-+#endif
-         } else {
-             /* If delayed or falling behind, realign to current time */
-             next_tick = now;
 diff --git a/src/pc/launcher.cpp b/src/pc/launcher.cpp
-index ea637ab..c0cfd45 100644
 --- a/src/pc/launcher.cpp
 +++ b/src/pc/launcher.cpp
-@@ -877,7 +877,15 @@ extern "C" void pc_launcher_configure(AuroraConfig* config) {
+@@ -877,7 +877,15 @@
  }
  
  static std::filesystem::path pc_resources_path() {
@@ -148,7 +180,7 @@ index ea637ab..c0cfd45 100644
      return "";
  #else
      const char* base = SDL_GetBasePath();
-@@ -892,7 +900,8 @@ extern "C" int pc_launcher_run(const char* command_line_disc, SDL_Window* window
+@@ -892,7 +900,8 @@
              auto info = launcher::inspect_disc(command_line_disc);
              if (info.supported && aurora_dvd_open(command_line_disc)) {
                  pc_load_disc_fonts(command_line_disc);
@@ -158,7 +190,7 @@ index ea637ab..c0cfd45 100644
                                   command_line_disc :
                                   std::filesystem::absolute(command_line_disc).string();
                  if (!launcher::save_preferences(config_path, prefs, error))
-@@ -948,7 +957,8 @@ public:
+@@ -948,7 +957,8 @@
      // Set while the menu writes its own widgets: suppresses the Change and
      // Focus events that echo back, which would otherwise loop or chatter.
      bool quiet = false;
@@ -168,7 +200,7 @@ index ea637ab..c0cfd45 100644
      int tab = 0;
      u32 pad_port = 0;
      // -1 when idle, otherwise the mapping slot waiting for input. Axis slots
-@@ -1105,7 +1115,12 @@ public:
+@@ -1105,7 +1115,12 @@
          slider("sfx-volume", prefs.sfx_volume * 100.0f);
          label("sfx-volume-val", std::to_string(int(prefs.sfx_volume * 100 + 0.5f)) + "%");
          label("mute", prefs.mute ? "On" : "Off");
@@ -182,7 +214,7 @@ index ea637ab..c0cfd45 100644
          slider("scale", prefs.scale * 100.0f);
          label("scale-val", std::to_string(int(prefs.scale * 100 + 0.5f)) + "%");
          label("menu-version", pc::get_app_version());
-@@ -1299,7 +1314,7 @@ public:
+@@ -1299,7 +1314,7 @@
          } else if (id == "mute")
              prefs.mute = !prefs.mute;
          else if (id == "fps")
@@ -191,7 +223,7 @@ index ea637ab..c0cfd45 100644
          else if (id == "scale") {
              prefs.scale = prefs.scale >= 1.5f ? 0.75f : prefs.scale + 0.25f;
              aurora::rmlui::set_ui_scale(prefs.scale);
-@@ -1375,9 +1390,18 @@ public:
+@@ -1375,9 +1390,18 @@
              return;
          if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
              const auto button = e.gbutton.button;
@@ -213,7 +245,7 @@ index ea637ab..c0cfd45 100644
              }
              if (!open || binding >= 0)
                  return;  // a bind prompt owns every button
-@@ -1410,6 +1434,12 @@ public:
+@@ -1410,6 +1434,12 @@
              default:
                  break;
              }
@@ -226,7 +258,7 @@ index ea637ab..c0cfd45 100644
          } else if (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && open && binding < 0) {
              const auto value = e.gaxis.value;
              const auto now = SDL_GetTicks();
-@@ -1515,13 +1545,38 @@ extern "C" void pc_menu_event(const SDL_Event* event) {
+@@ -1515,13 +1545,38 @@
          port_menu.gamepad(*event);
  }
  extern "C" void pc_menu_update(void) {
@@ -270,10 +302,9 @@ index ea637ab..c0cfd45 100644
              }
          } else if (port_menu.counter->IsVisible())
 diff --git a/src/pc/launcher.h b/src/pc/launcher.h
-index 32c52b8..b4af60f 100644
 --- a/src/pc/launcher.h
 +++ b/src/pc/launcher.h
-@@ -12,6 +12,17 @@ void pc_menu_update(void);
+@@ -12,6 +12,17 @@
  void pc_menu_toggle(void);
  void pc_menu_event(const union SDL_Event* event);
  bool pc_menu_is_open(void);
@@ -292,10 +323,9 @@ index 32c52b8..b4af60f 100644
  }
  #endif
 diff --git a/src/pc/launcher_data.cpp b/src/pc/launcher_data.cpp
-index 1dbae9a..1ba689b 100644
 --- a/src/pc/launcher_data.cpp
 +++ b/src/pc/launcher_data.cpp
-@@ -26,6 +26,7 @@ static inline int mkstemp(char* tmpl) {
+@@ -26,6 +26,7 @@
  #endif
  #else
  #include <unistd.h>
@@ -303,7 +333,7 @@ index 1dbae9a..1ba689b 100644
  #endif
  
  #if defined(__has_include)
-@@ -374,6 +375,13 @@ Preferences load_preferences(const std::filesystem::path& path) {
+@@ -374,6 +375,13 @@
  
  bool save_preferences(
      const std::filesystem::path& path, const Preferences& prefs, std::string& error) {
@@ -317,7 +347,7 @@ index 1dbae9a..1ba689b 100644
      // A sibling temporary file keeps replacement atomic on the preference filesystem.
      std::string pattern = path.string() + ".XXXXXX";
      int fd = mkstemp(pattern.data());
-@@ -381,6 +389,7 @@ bool save_preferences(
+@@ -381,6 +389,7 @@
          error = "Could not save launcher settings: " + std::string(std::strerror(errno));
          return false;
      }
@@ -325,7 +355,7 @@ index 1dbae9a..1ba689b 100644
      std::ostringstream text;
      text << "disc " << std::quoted(prefs.disc) << "\nvsync " << prefs.vsync << "\nfullscreen "
           << prefs.fullscreen << "\nscale " << prefs.scale << '\n'
-@@ -409,6 +418,7 @@ bool save_preferences(
+@@ -409,6 +418,7 @@
          ok = false;
      if (close(fd) != 0)
          ok = false;
@@ -333,7 +363,7 @@ index 1dbae9a..1ba689b 100644
      std::error_code ec;
      if (ok) {
          std::filesystem::rename(pattern, path, ec);
-@@ -418,6 +428,11 @@ bool save_preferences(
+@@ -418,6 +428,11 @@
          std::filesystem::remove(pattern, ec);
          error = "Could not save launcher settings.";
      }
@@ -345,415 +375,3 @@ index 1dbae9a..1ba689b 100644
      return ok;
  }
  }  // namespace launcher
-diff --git a/src/pc/main.c b/src/pc/main.c
-index 0954e60..499b746 100644
---- a/src/pc/main.c
-+++ b/src/pc/main.c
-@@ -78,9 +78,74 @@ void pc_log_line(const char* fmt, ...) {
-     }
- }
- 
-+#if defined(__SWITCH__)
-+/* Every Switch log sink has to share ONE file offset.
-+ *
-+ * This sink used to own a private fopen("sdmc:/switch/melee-nx/melee-nx-runtime.log",
-+ * "a"), and so did os.c's switch_log_vwrite(), while main_switch.cpp's
-+ * redirect_stdio_to_sd() dup2()'d a third descriptor for the same path onto
-+ * fd 1/2. Three handles, three independent file offsets, all appending: they
-+ * overwrote each other, and the file ended up truncated to whatever the last
-+ * handle to write had reached. Hardware-confirmed 2026-09-17 -- a run that
-+ * demonstrably got into melee_main() (gmMain's file-cache prewarm was on the
-+ * main thread's stack, and aurora's gfx render/pipeline workers were running,
-+ * which only start once webgpu::initialize() has succeeded) left a 331-byte
-+ * log that stopped at aurora's sixth line. Everything after that was lost,
-+ * which is exactly the part worth reading.
-+ *
-+ * Write to fd 1 instead. redirect_stdio_to_sd() rebinds the RAW descriptor, so
-+ * fd 1 is process-wide: one offset shared by every sink on every thread, and
-+ * no per-_reent FILE* that could hit a stale devoptab from a Dawn worker (the
-+ * original reason this sink avoided stdout -- see main_switch.cpp for why the
-+ * fd-level redirect fixes that for good). write() also holds no newlib buffer,
-+ * so a line has reached the SD card before the next one is formatted. */
-+#include <pthread.h>
-+#include <unistd.h>
-+
-+static pthread_mutex_t s_switch_log_mutex = PTHREAD_MUTEX_INITIALIZER;
-+
-+/* Serialized so two threads' lines never interleave mid-line. */
-+static void switch_log_write(const char* buf, size_t len, bool flush_now) {
-+    static uint64_t s_last_flush_ms = 0;
-+    static uint32_t s_lines = 0;
-+    pthread_mutex_lock(&s_switch_log_mutex);
-+    while (len > 0) {
-+        const ssize_t n = write(STDOUT_FILENO, buf, len);
-+        if (n <= 0) {
-+            break;
-+        }
-+        buf += n;
-+        len -= (size_t)n;
-+    }
-+    s_lines++;
-+    struct timespec ts;
-+    clock_gettime(CLOCK_MONOTONIC, &ts);
-+    uint64_t now_ms = (uint64_t)ts.tv_sec * 1000ull + (uint64_t)(ts.tv_nsec / 1000000);
-+    if (flush_now || s_lines >= 64 || now_ms - s_last_flush_ms >= 1000) {
-+        fsync(STDOUT_FILENO);
-+        s_last_flush_ms = now_ms;
-+        s_lines = 0;
-+    }
-+    pthread_mutex_unlock(&s_switch_log_mutex);
-+}
-+#endif
-+
- static void log_callback(
-     AuroraLogLevel level, const char* module, const char* message, unsigned int len) {
--#if defined(__ANDROID__)
-+#if defined(__SWITCH__)
-+    const double t = log_now_ms();
-+    static const char* const names[] = {"DEBUG", "INFO", "WARN", "ERROR", "FATAL"};
-+    char line[1024];
-+    const int n = snprintf(line, sizeof(line), "[%9.3f] [%s] %s: %.*s\n", t,
-+        names[level], module, (int)len, message);
-+    if (n > 0) {
-+        switch_log_write(line, (size_t)n < sizeof(line) ? (size_t)n : sizeof(line) - 1, level >= LOG_ERROR);
-+    }
-+    if (level == LOG_FATAL) {
-+        fsync(STDOUT_FILENO);
-+        abort();
-+    }
-+#elif defined(__ANDROID__)
-     int prio = ANDROID_LOG_INFO;
-     switch (level) {
-     case LOG_DEBUG:
-@@ -275,7 +340,11 @@ static AuroraBackend backend_from_env(void) {
-     return BACKEND_AUTO;
- }
- 
-+#if defined(__SWITCH__)
-+MELEE_EXPORT int melee_main_impl(int argc, char* argv[]) {
-+#else
- MELEE_EXPORT int main(int argc, char* argv[]) {
-+#endif
- #if defined(_WIN32)
-     SetUnhandledExceptionFilter(crash_handler);
- #endif
-@@ -298,12 +367,37 @@ MELEE_EXPORT int main(int argc, char* argv[]) {
-             usage(argv[0]);
-         }
-     }
-+#if defined(__SWITCH__)
-+    static const char* const kMeleeAppId = "melee-nx";
-+#else
-+    static const char* const kMeleeAppId = "melee-pc";
-+#endif
-+#if defined(__SWITCH__)
-+    /* SDL3 has no filesystem backend for Switch at all (no src/filesystem/switch/;
-+     * it falls through to the "dummy" backend), so SDL_GetPrefPath() always
-+     * returns NULL here. Passing that straight to aurora's cache_init()
-+     * (gpu_cache.cpp:39) calls strlen() on it and Data Aborts at address 0
-+     * (hardware-confirmed) the moment Dawn's shader cache is first touched.
-+     * Use the same SD card root the on-device disc-extraction gate already
-+     * writes to (switch/src/game_data/game_data_gate.h's kDataRoot) instead of
-+     * ever calling SDL_GetPrefPath() on this platform. */
-+    static const char* const kMeleeUserPath = "sdmc:/switch/melee-nx/";
-+    static const char* const kMeleeCachePath = "sdmc:/switch/melee-nx/";
-+#else
-+    static const char* const kMeleeUserPath = NULL;
-+    static const char* const kMeleeCachePath = NULL;
-+#endif
-     AuroraConfig config = {
-         /* appName doubles as the window title; the save/cache dirs stay
-          * pinned so a renamed test window still uses the same memory card. */
--        .appName = getenv("MELEE_WINDOW_TITLE") ? getenv("MELEE_WINDOW_TITLE") : "melee-pc",
--        .userPath = SDL_GetPrefPath(NULL, "melee-pc"),
--        .cachePath = SDL_GetPrefPath(NULL, "melee-pc"),
-+        .appName = getenv("MELEE_WINDOW_TITLE") ? getenv("MELEE_WINDOW_TITLE") : kMeleeAppId,
-+        .userPath = kMeleeUserPath ? kMeleeUserPath : SDL_GetPrefPath(NULL, kMeleeAppId),
-+        .cachePath = kMeleeCachePath ? kMeleeCachePath : SDL_GetPrefPath(NULL, kMeleeAppId),
-+#if defined(__SWITCH__)
-+        /* No window manager on Switch; aurora's window.cpp only forces
-+         * SDL_WINDOW_FULLSCREEN for TARGET_OS_IOS/TV unless this is set. */
-+        .startFullscreen = true,
-+#endif
-         .msaa = 1,
-         .maxTextureAnisotropy = 16,
-         /* MELEE_VSYNC=0 picks Mailbox/Immediate instead of FifoRelaxed; some
-diff --git a/src/pc/os.c b/src/pc/os.c
-index 55cc86c..1ce5459 100644
---- a/src/pc/os.c
-+++ b/src/pc/os.c
-@@ -322,6 +322,19 @@ void* pc_resolve_ext_ptr(uint32_t id) {
-     return s_ext_ptrs[id - 1];
- }
- 
-+uintptr_t pc_mem1_hi;
-+uint32_t pc_mem1_lo;
-+uint32_t pc_mem1_len;
-+
-+/* Called once by AllocMEM1, before any disc file is parsed. See src/pc/disc.h
-+ * for why Switch needs a window at all. */
-+void pc_disc_set_mem1_window(const void* base, uint32_t size) {
-+    const uintptr_t u = (uintptr_t)base;
-+    pc_mem1_hi = u & ~(uintptr_t)0xFFFFFFFFu;
-+    pc_mem1_lo = (uint32_t)u;
-+    pc_mem1_len = size;
-+}
-+
- void pc_disc_ptr_overflow(const void* p, const char* file, int line) {
-     fprintf(stderr, "%s:%d: pointer %p does not fit a 32-bit disc slot\n", file, line, p);
-     abort();
-@@ -344,9 +357,66 @@ void pc_platform_init(void) {
- #include <android/log.h>
- #endif
- 
-+#if defined(__SWITCH__)
-+/* stdout/stderr are per-_reent (per-thread) FILE* on this newlib/libnx target
-+ * (each thread's __getreent() gets its OWN copy, inherited by pointer-value
-+ * from whichever thread created it -- confirmed via libnx's threadCreate()
-+ * source). melee's worker threads (e.g. pc_file_cache_start_prewarm's
-+ * background thread, src/pc/file_cache.cpp) call OSReport() concurrently with
-+ * the main thread, and hardware testing showed this hitting a null devoptab
-+ * entry inside newlib's _write_r/_lseek_r the first time a background thread
-+ * touched stdout post-boot (Data Abort, address 0). Route OSReport/OSPanic
-+ * through the RAW descriptor instead: main_switch.cpp's redirect_stdio_to_sd()
-+ * rebinds fd 1 itself, which is process-wide, so every thread shares the exact
-+ * same fd/devoptab state however its own stdout FILE* was initialized.
-+ *
-+ * This deliberately does NOT keep a private fopen() of the log path. main.c's
-+ * aurora sink used to hold one too, which gave the file three independent
-+ * append offsets (here, there, and redirect_stdio_to_sd's fd) that overwrote
-+ * each other and silently truncated the log -- see main.c's switch_log_write()
-+ * for the hardware evidence. One descriptor, one offset, one mutex. */
-+#include <pthread.h>
-+#include <unistd.h>
-+
-+static pthread_mutex_t s_switch_log_mutex = PTHREAD_MUTEX_INITIALIZER;
-+
-+static void switch_log_vwrite(const char* msg, va_list list) {
-+    char line[1024];
-+    const int formatted = vsnprintf(line, sizeof(line), msg, list);
-+    if (formatted <= 0) {
-+        return;
-+    }
-+    size_t len = (size_t)formatted < sizeof(line) ? (size_t)formatted : sizeof(line) - 1;
-+    const char* buf = line;
-+    pthread_mutex_lock(&s_switch_log_mutex);
-+    while (len > 0) {
-+        const ssize_t n = write(STDOUT_FILENO, buf, len);
-+        if (n <= 0) {
-+            break;
-+        }
-+        buf += n;
-+        len -= (size_t)n;
-+    }
-+    static uint64_t s_last_flush_ms = 0;
-+    static uint32_t s_lines = 0;
-+    s_lines++;
-+    struct timespec ts;
-+    clock_gettime(CLOCK_MONOTONIC, &ts);
-+    uint64_t now_ms = (uint64_t)ts.tv_sec * 1000ull + (uint64_t)(ts.tv_nsec / 1000000);
-+    if (s_lines >= 64 || now_ms - s_last_flush_ms >= 1000) {
-+        fsync(STDOUT_FILENO);
-+        s_last_flush_ms = now_ms;
-+        s_lines = 0;
-+    }
-+    pthread_mutex_unlock(&s_switch_log_mutex);
-+}
-+#endif
-+
- void OSVReport(const char* msg, va_list list) {
- #if defined(__ANDROID__)
-     __android_log_vprint(ANDROID_LOG_INFO, "OSReport", msg, list);
-+#elif defined(__SWITCH__)
-+    switch_log_vwrite(msg, list);
- #else
-     vfprintf(stdout, msg, list);
-     fflush(stdout);
-@@ -367,6 +437,11 @@ void OSPanic(const char* file, int line, const char* msg, ...) {
-     char buf[1024];
-     vsnprintf(buf, sizeof(buf), msg, args);
-     __android_log_print(ANDROID_LOG_FATAL, "OSPanic", "PANIC %s:%d: %s", file, line, buf);
-+#elif defined(__SWITCH__)
-+    char buf[1024];
-+    vsnprintf(buf, sizeof(buf), msg, args);
-+    OSReport("PANIC %s:%d: %s\n", file, line, buf);
-+    fsync(STDOUT_FILENO);
- #else
-     fprintf(stderr, "PANIC %s:%d: ", file, line);
-     vfprintf(stderr, msg, args);
-diff --git a/src/pc/vi.c b/src/pc/vi.c
-index 2ee5060..df8841c 100644
---- a/src/pc/vi.c
-+++ b/src/pc/vi.c
-@@ -30,6 +30,39 @@ static void* s_current_fb;
- static BOOL s_black;
- static bool s_in_frame;
- 
-+static u64 s_sim_start_ns;
-+static u64 s_last_sim_ns;
-+static u64 s_last_submit_ns;
-+static u64 s_last_wait_ns;
-+static u64 s_frame_prev_ns;
-+
-+static float s_prof_fps = 60.0f;
-+static float s_prof_frame_ms = 16.6f;
-+static float s_prof_sim_ms = 0.0f;
-+static float s_prof_submit_ms = 0.0f;
-+static float s_prof_wait_ms = 0.0f;
-+static float s_prof_peak_ms = 16.6f;
-+
-+static u64 s_prof_win_t0 = 0;
-+static u32 s_prof_win_count = 0;
-+static u64 s_acc_sim_ns = 0;
-+static u64 s_acc_submit_ns = 0;
-+static u64 s_acc_wait_ns = 0;
-+static u64 s_acc_frame_ns = 0;
-+static u64 s_win_peak_ns = 0;
-+
-+void pc_profiler_get_stats(PcProfilerStats* out_stats) {
-+    if (!out_stats) {
-+        return;
-+    }
-+    out_stats->fps = s_prof_fps;
-+    out_stats->frame_ms = s_prof_frame_ms;
-+    out_stats->sim_ms = s_prof_sim_ms;
-+    out_stats->submit_ms = s_prof_submit_ms;
-+    out_stats->wait_ms = s_prof_wait_ms;
-+    out_stats->peak_ms = s_prof_peak_ms;
-+}
-+
- void pc_os_run_alarms(void);
- void aurora_heap_check(void);
- 
-@@ -41,14 +74,16 @@ void pc_frame_boundary(void) {
-      * Track the outliers instead, plus how far the pacing sleep overshoots
-      * its request -- on Windows a coarse timer resolution turns a 5ms wait
-      * into ~16ms, which is stutter the frame average never shows. */
--    static u64 frame_prev_ns;
-     static u64 frame_worst_ns;
-     static u32 frame_late_20;
-     static u32 frame_late_33;
-     static u64 sleep_worst_over_ns;
-+    static u64 frame_prev_ns;
- 
-     if (s_in_frame) {
-+        u64 sub_t0 = SDL_GetTicksNS();
-         aurora_end_frame();
-+        s_last_submit_ns = SDL_GetTicksNS() - sub_t0;
-         s_in_frame = false;
-     }
-     aurora_heap_check();    /* no-op unless MELEE_HEAP_CHECK is set */
-@@ -57,6 +92,39 @@ void pc_frame_boundary(void) {
-         fps_log = getenv("MELEE_FPS") != NULL;
-         fps_t0 = SDL_GetTicks();
-     }
-+    u64 now = SDL_GetTicks();
-+    u64 now_ns = SDL_GetTicksNS();
-+    if (s_frame_prev_ns != 0) {
-+        u64 delta = now_ns - s_frame_prev_ns;
-+        s_prof_win_count++;
-+        s_acc_frame_ns += delta;
-+        s_acc_sim_ns += s_last_sim_ns;
-+        s_acc_submit_ns += s_last_submit_ns;
-+        s_acc_wait_ns += s_last_wait_ns;
-+        if (delta > s_win_peak_ns) {
-+            s_win_peak_ns = delta;
-+        }
-+    }
-+    s_frame_prev_ns = now_ns;
-+
-+    if (s_prof_win_t0 == 0) {
-+        s_prof_win_t0 = now;
-+    } else if (now - s_prof_win_t0 >= 250 && s_prof_win_count > 0) {
-+        s_prof_fps = (float)(s_prof_win_count * 1000.0 / (double)(now - s_prof_win_t0));
-+        s_prof_frame_ms = (float)(s_acc_frame_ns / (double)s_prof_win_count / 1e6);
-+        s_prof_sim_ms = (float)(s_acc_sim_ns / (double)s_prof_win_count / 1e6);
-+        s_prof_submit_ms = (float)(s_acc_submit_ns / (double)s_prof_win_count / 1e6);
-+        s_prof_wait_ms = (float)(s_acc_wait_ns / (double)s_prof_win_count / 1e6);
-+        s_prof_peak_ms = (float)(s_win_peak_ns / 1e6);
-+
-+        s_prof_win_t0 = now;
-+        s_prof_win_count = 0;
-+        s_acc_frame_ns = 0;
-+        s_acc_sim_ns = 0;
-+        s_acc_submit_ns = 0;
-+        s_acc_wait_ns = 0;
-+        s_win_peak_ns = 0;
-+    }
-     if (fps_log) {
-         u64 now = SDL_GetTicks();
-         u64 now_ns = SDL_GetTicksNS();
-@@ -119,24 +187,26 @@ void pc_frame_boundary(void) {
-         exit(0);
-     }
- 
-+#if !defined(__SWITCH__)
-     /* Enforce deterministic 60 Hz simulation pacing regardless of display refresh rate
-      * (e.g. 120 Hz, 144 Hz, 240 Hz high-refresh monitors). When VSync is enabled on high-refresh
-      * displays, aurora_begin_frame() unblocks at monitor refresh rate. Without this check,
-      * the simulation would run at 2x-4x speed. Pacing strictly to 60.000 Hz ensures physics,
--     * hitboxes, and timers remain bit-identical. */
-+     * hitboxes, and timers remain bit-identical. On Switch, the display is fixed 60 Hz and
-+     * present mode is always Fifo, so aurora_begin_frame() already provides exact 60 Hz pacing. */
-     static u64 next_sim_ns;
-     const u64 sim_period = 1000000000ull / 60;
--    u64 now = SDL_GetTicksNS();
--    if (next_sim_ns == 0 || now > next_sim_ns + sim_period * 2) {
--        next_sim_ns = now; /* first frame, or large hitch: resync */
--    } else if (now < next_sim_ns) {
--        const u64 want = next_sim_ns - now;
-+    now_ns = SDL_GetTicksNS();
-+    if (next_sim_ns == 0 || now_ns > next_sim_ns + sim_period * 2) {
-+        next_sim_ns = now_ns; /* first frame, or large hitch: resync */
-+    } else if (now_ns < next_sim_ns) {
-+        const u64 want = next_sim_ns - now_ns;
-         /* On standard 60 Hz VSync, aurora_begin_frame already waited for VBlank. On high-refresh
-          * (120/144/240 Hz) or VSync-off, this throttles simulation to exact 60 Hz. */
-         if (!aurora_vsync_enabled() || want > 2000000ull) {
-             SDL_DelayPrecise(want);
-             if (fps_log > 0) {
--                const u64 slept = SDL_GetTicksNS() - now;
-+                const u64 slept = SDL_GetTicksNS() - now_ns;
-                 if (slept > want && slept - want > sleep_worst_over_ns) {
-                     sleep_worst_over_ns = slept - want;
-                 }
-@@ -144,10 +214,12 @@ void pc_frame_boundary(void) {
-         }
-     }
-     next_sim_ns += sim_period;
-+#endif
- 
-     /* aurora_begin_frame returns false while minimized/paused; keep pumping.
-      * Sleep a frame between attempts: without it a minimized window spins a
-      * core at 100% polling SDL. */
-+    u64 wait_t0 = SDL_GetTicksNS();
-     while (!aurora_begin_frame()) {
-         event = aurora_update();
-         while (event != NULL && event->type != AURORA_NONE) {
-@@ -158,6 +230,7 @@ void pc_frame_boundary(void) {
-         }
-         SDL_Delay(16);
-     }
-+    s_last_wait_ns = SDL_GetTicksNS() - wait_t0;
-     s_in_frame = true;
- 
-     s_retrace_count++;
-@@ -172,6 +245,10 @@ void pc_frame_boundary(void) {
- }
- 
- void VIWaitForRetrace(void) {
-+    u64 enter_ns = SDL_GetTicksNS();
-+    if (s_sim_start_ns != 0) {
-+        s_last_sim_ns = enter_ns - s_sim_start_ns;
-+    }
-     pc_frame_boundary();
-     /* The overlay pauses the game. Melee's whole simulation hangs off this
-      * call returning, so keep presenting frames and pumping input here and
-@@ -179,6 +256,7 @@ void VIWaitForRetrace(void) {
-     while (pc_menu_is_open() && !pc_exit_requested) {
-         pc_frame_boundary();
-     }
-+    s_sim_start_ns = SDL_GetTicksNS();
- }
- 
- u32 VIGetRetraceCount(void) {

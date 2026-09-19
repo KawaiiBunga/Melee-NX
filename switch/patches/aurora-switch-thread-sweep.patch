@@ -1,0 +1,22 @@
+diff --git a/lib/thread.cpp b/lib/thread.cpp
+--- a/lib/thread.cpp
++++ b/lib/thread.cpp
+@@ -1,5 +1,8 @@
+ #include "thread.hpp"
+ #include "logging.hpp"
++#if defined(__SWITCH__)
++#include "perf_switch.h"
++#endif
+ 
+ #include <SDL3/SDL_thread.h>
+ #include <tracy/Tracy.hpp>
+@@ -401,6 +404,9 @@
+   if (options.affinity == Affinity::SharedCache) {
+     pin_shared_cache();
+   }
++#if defined(__SWITCH__)
++  melee_nx_perf_thread(options.name.c_str());
++#endif
+ }
+ 
+ } // namespace aurora::thread

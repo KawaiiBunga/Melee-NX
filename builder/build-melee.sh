@@ -12,6 +12,7 @@
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/.." && pwd)"
+source "$here/patch-common.sh"
 stage="${1:-all}"
 jobs="${MELEE_BUILD_JOBS:-4}"
 case "$stage" in patch|configure|build|all) ;;
@@ -34,10 +35,10 @@ require_file() { [[ -f "$1" ]] || { echo "Required file missing: $1" >&2; exit 6
 apply_patch_once() {
   local tree="$1" patch_file="$2"
   require_file "$patch_file"
-  if git -C "$tree" apply --ignore-space-change --reverse --check "$patch_file" >/dev/null 2>&1; then
+  if git_apply_tree "$tree" --ignore-space-change --reverse --check "$patch_file" >/dev/null 2>&1; then
     printf 'Already applied: %s\n' "${patch_file##*/}"
-  elif git -C "$tree" apply --ignore-space-change --check "$patch_file"; then
-    git -C "$tree" apply --ignore-space-change "$patch_file"
+  elif git_apply_tree "$tree" --ignore-space-change --check "$patch_file"; then
+    git_apply_tree "$tree" --ignore-space-change "$patch_file"
     printf 'Applied: %s\n' "${patch_file##*/}"
   else
     echo "ERROR: patch conflicts with $tree: $patch_file" >&2

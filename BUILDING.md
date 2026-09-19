@@ -44,8 +44,7 @@ Then build:
 ```bash
 bash builder/docker.sh image            # build the container (once, ~10 min)
 bash builder/docker.sh graphics all     # Dawn + SDL3 (once, slow)
-bash builder/docker.sh melee configure
-bash builder/docker.sh melee build
+bash builder/docker.sh melee all        # apply game patches, configure, build
 ```
 
 The result is `build/switch/melee.nro`.
@@ -115,10 +114,11 @@ standing between this project and a genuine one-command build.
 |---|---|
 | `fetch-deps.sh` | Clones `ref/melee-pc`, `ref/dawn`, `ref/SDL`, `ref/SDL-dusklight` at pinned revisions. Safe to re-run; existing trees are left alone |
 | `docker.sh image` | Builds the container from `switch/docker/Dockerfile`: devkitA64 GCC + LLVM Clang 19 |
-| `docker.sh graphics prepare` | Applies every patch in `switch/patches/` to the reference trees. Idempotent — each patch is reverse-checked first |
+| `docker.sh graphics prepare` | Applies Dawn, SDL and Aurora patches. Idempotent — patches are reverse-checked first |
 | `docker.sh graphics all` | `prepare`, then builds Dawn and SDL3. The slow one |
 | `docker.sh melee configure` | CMake configure for the NRO |
 | `docker.sh melee build` | Compiles and links `build/switch/melee.nro` |
+| `docker.sh melee all` | Applies game patches, then configures and builds the NRO |
 | `docker.sh shell` | Drops you into the container with everything mounted |
 
 After the first full build you normally only need:
@@ -127,8 +127,9 @@ After the first full build you normally only need:
 bash builder/docker.sh melee build
 ```
 
-Re-run `graphics prepare` after pulling changes to `switch/patches/`, and
-`graphics all` only if a dependency source tree itself changed.
+Re-run `graphics prepare` and `melee all` after pulling patch changes. Rebuild
+SDL or Dawn as well when patches change their sources. For a source audit, run
+`python builder/verify-patches.py` (Python 3 required on the host).
 
 ### Why two compilers
 
@@ -145,8 +146,8 @@ devkitPro's bundled Clang is not. So: GCC for C, Clang 19 for C++. See
 
 | Value | Tree | Notes |
 |---|---|---|
-| `dusklight` (default) | `ref/SDL-dusklight` — SDL 3.4.10 + Dusklight Switch backend | **Currently a performance regression — see [Current state](#6-current-state)** |
-| `legacy` | `ref/SDL` — SDL 3.4.4 | The older, faster-measuring tree |
+| `dusklight` (default) | `ref/SDL-dusklight` — SDL 3.4.10 + Dusklight Switch backend | Current default; best-performing build |
+| `legacy` | `ref/SDL` — SDL 3.4.4 | Comparison/fallback tree |
 
 It must match between `graphics` and `melee` stages, so set it once:
 
@@ -199,18 +200,22 @@ sha256sum build/switch/melee.nro /tmp/deployed.nro
 
 ## 6. Current state
 
-This is a work in progress and the performance is not good yet.
+Work in progress, but playable and improving.
 
 - It boots, reaches the main menu, and plays.
-- **Gameplay frame rate is the active problem.** The most recent build regressed
-  badly (0.6–7.5 FPS) after an SDL migration; the build before it managed
-  roughly 15–20 FPS. Build with `MELEE_SDL_VARIANT=legacy` for the faster one.
+- Gameplay runs ~36 fps median (up to 60) at 720p on stock clocks with the
+  default `dusklight` variant. A locked 60 is the remaining goal.
 - Audio works but is latent.
-- Rendering can drop geometry when a shader pipeline is still compiling.
+- Rendering can briefly drop geometry while a shader pipeline is still compiling.
+- Match/stage loads can still hitch for a second or two while streaming assets.
 
 `PERF` lines in `melee-nx-runtime.log` report per-second frame timing split into
 `sim` (game logic), `submit` and `wait`. `PIPELINES` lines report how many draws
 were skipped for a not-yet-compiled pipeline.
+
+The optional affinity sweep, individual-frame histogram and detailed stage
+timers are documented in [PERFORMANCE.md](PERFORMANCE.md). Affinity experiments
+are off by default; select them through `perf.cfg` for matched hardware tests.
 
 ---
 

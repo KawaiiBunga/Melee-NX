@@ -10,6 +10,7 @@
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/.." && pwd)"
+source "$here/patch-common.sh"
 stage="${1:-all}"
 jobs="${MELEE_BUILD_JOBS:-4}"
 case "$stage" in prepare|dawn|sdl|aurora|all) ;;
@@ -45,14 +46,15 @@ apply_sdl_stack() {
   local tree="$1"; shift
   local top="${!#}"
   require_file "$top"
-  if git -C "$tree" apply --recount --ignore-space-change --reverse --check "$top" >/dev/null 2>&1; then
+  if git_apply_tree "$tree" --recount --ignore-space-change --reverse --check "$top" >/dev/null 2>&1; then
     printf 'Already applied: SDL patch stack (%s)\n' "${top##*/}"
     return
   fi
   local patch_file
   for patch_file in "$@"; do
     require_file "$patch_file"
-    git -C "$tree" apply --recount --ignore-space-change "$patch_file"
+    git_apply_tree "$tree" --recount --ignore-space-change --check "$patch_file"
+    git_apply_tree "$tree" --recount --ignore-space-change "$patch_file"
     printf 'Applied: %s\n' "${patch_file##*/}"
   done
 }
@@ -60,10 +62,10 @@ apply_sdl_stack() {
 apply_patch_once() {
   local tree="$1" patch_file="$2"
   require_file "$patch_file"
-  if git -C "$tree" apply --ignore-space-change --reverse --check "$patch_file" >/dev/null 2>&1; then
+  if git_apply_tree "$tree" --ignore-space-change --reverse --check "$patch_file" >/dev/null 2>&1; then
     printf 'Already applied: %s\n' "${patch_file##*/}"
-  elif git -C "$tree" apply --ignore-space-change --check "$patch_file"; then
-    git -C "$tree" apply --ignore-space-change "$patch_file"
+  elif git_apply_tree "$tree" --ignore-space-change --check "$patch_file"; then
+    git_apply_tree "$tree" --ignore-space-change "$patch_file"
     printf 'Applied: %s\n' "${patch_file##*/}"
   else
     echo "ERROR: patch conflicts with $tree: $patch_file" >&2
@@ -93,14 +95,16 @@ prepare() {
   fi
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-surface.patch"
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-dawn-backends.patch"
-  apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-status-compat.patch"
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-no-backtrace.patch"
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-no-mmap.patch"
-  apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-pipeline-cache-io-lock.patch"
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-mem1-window.patch"
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-encoder-state-cache.patch"
-  # Layers on aurora-switch-pipeline-cache-io-lock.patch; apply after it.
+  # File-disjoint patches include the recovered build's complete source delta.
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-cache-recovery.patch"
+  apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-blob-cache-batch.patch"
+  apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-platform-compat.patch"
+  apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-perf-imgui.patch"
+  apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-thread-sweep.patch"
 }
 
 build_dawn() {

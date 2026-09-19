@@ -1,21 +1,22 @@
+diff --git a/lib/dawn/BackendBinding.cpp b/lib/dawn/BackendBinding.cpp
 --- a/lib/dawn/BackendBinding.cpp
 +++ b/lib/dawn/BackendBinding.cpp
-@@ -5,7 +5,11 @@
- #include <memory>
-
+@@ -6,6 +6,10 @@
+ 
  #if !defined(SDL_PLATFORM_MACOS) && !defined(SDL_PLATFORM_IOS) && !defined(SDL_PLATFORM_TVOS)
  #include <SDL3/SDL_video.h>
- #endif
-
-+#if defined(__SWITCH__)
-+#include <switch.h>
 +#endif
 +
++#if defined(__SWITCH__)
++#include <switch.h>
+ #endif
+ 
  namespace aurora::webgpu {
-@@ -23,6 +27,14 @@
+@@ -22,6 +26,14 @@
+   std::shared_ptr<wgpu::SurfaceSourceAndroidNativeWindow> desc =
        std::make_shared<wgpu::SurfaceSourceAndroidNativeWindow>();
    desc->window = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER, nullptr);
-   return std::move(desc);
++  return std::move(desc);
 +#elif defined(__SWITCH__)
 +  // The libnx SDL video driver has no native-window property; Dawn's Vulkan
 +  // backend takes the NWindow directly via VK_NN_vi_surface
@@ -23,7 +24,6 @@
 +  std::shared_ptr<wgpu::SurfaceSourceSwitchNativeWindow> desc =
 +      std::make_shared<wgpu::SurfaceSourceSwitchNativeWindow>();
 +  desc->window = nwindowGetDefault();
-+  return std::move(desc);
+   return std::move(desc);
  #elif defined(SDL_PLATFORM_WIN32)
    std::shared_ptr<wgpu::SurfaceSourceWindowsHWND> desc = std::make_shared<wgpu::SurfaceSourceWindowsHWND>();
-   desc->hwnd = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
