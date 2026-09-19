@@ -30,12 +30,6 @@ bash builder/build-melee.sh all
 
 Output: `build/switch/melee.nro`
 
-## Rendering path
-
-Game C → Aurora GX → Dawn WebGPU → Vulkan (NVK) → libnx NWindow
-
-Same proven stack as [KartPad-NX](https://github.com/999sian/KartPad-NX).
-
 ## License
 
 Port code (`switch/`, `builder/`) is GPL-3.0-or-later, matching melee-pc.
