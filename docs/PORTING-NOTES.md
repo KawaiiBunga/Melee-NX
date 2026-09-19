@@ -99,25 +99,63 @@ three aurora patches verbatim failed outright (`git apply --check` fails, not ju
   Both verified with `git apply --check` against the cloned tree.
 
 ### 3. Filesystem paths
-melee-pc reads `launcher.cfg` from `SDL_GetPrefPath(NULL, "melee-pc")`.
-`melee-switch-gcc-compat.patch` swaps the app id to `"melee-nx"` under `__SWITCH__`, so
-on Switch this resolves (via SDL3's Switch backend) to `sdmc:/switch/melee-nx/`. The
-disc image path in the config must point to `sdmc:/switch/melee-nx/disc.iso` or similar.
+The current SDL fallback has no usable Switch `SDL_GetPrefPath()` implementation.
+Under `__SWITCH__`, melee-pc therefore pins both Aurora user and cache paths to
+`sdmc:/switch/melee-nx/`; launcher persistence uses explicit Horizon-safe file
+handling. The disc image path in the config must point to a Horizon path such as
+`sdmc:/switch/melee-nx/GALE01.iso`.
 
-### 4. SQLite / shader cache on FAT32 — NOT actually wired yet
-`Graphics.cmake` optionally includes `${MELEE_AURORA_SOURCE}/cmake/AuroraSwitchSQLite.cmake`
-and calls `aurora_configure_switch_sqlite(sqlite3)` if that file exists (this mirrors
-KartPad-NX, whose own aurora fork has this file). **melee-pc's vendored aurora does not
-have this file** — confirmed, `find` turns up nothing under `extern/aurora`. The
-`include(... OPTIONAL)` silently no-ops and the `if(COMMAND ...)` guard skips the call,
-so this is safe (won't break the build) but the FAT32-friendly pragmas
-(`PRAGMA journal_mode=MEMORY; PRAGMA synchronous=OFF;`) are **not applied**. `sqlite3`
-is a real CMake target here (defined in `extern/aurora/extern/CMakeLists.txt`, used for
-Dawn's shader cache). Until this is addressed, expect possible slow or unreliable
-shader-cache writes to the SD card on hardware — watch for this in first-boot testing,
-and if it's a problem, either add a small `AuroraSwitchSQLite.cmake` to melee-pc's
-aurora fork (patchable via a new aurora patch) or set the pragmas directly wherever
-aurora opens the shader cache DB.
+### 4. SQLite / shader cache on FAT32 — corruption root-caused 2026-09-19
+
+`switch/src/sqlite_vfs.cpp` now provides a native Horizon SQLite VFS and SQLite
+is compiled with `SQLITE_OS_OTHER=1`, pthread mutexes, no WAL, no mmap, and
+temporary storage in memory. Aurora selects FAT32-safe DELETE journaling and
+NORMAL synchronization, and the NRO carries the initial pipeline descriptor
+database in RomFS.
+
+That fixed the original “unable to open database file” startup failure but not
+durability: every captured `dawn_cache.db` has been malformed.
+
+**Root cause, 2026-09-19 afternoon.** The header of the downloaded file declares
+4569 pages of 4096 bytes; the file is 18,706,432 bytes, which is 4567 pages. It
+is two pages short of what it claims — a torn tail, not random corruption. The
+console also still held `pipeline_cache.db-journal` and `pipeline_cache.db.lock`,
+which only an abandoned transaction leaves behind.
+
+The cause is §5's own exit wrapper. `kartpad_fast_exit()` goes straight to
+`svcExitProcess` and skips all fini processing on purpose, so
+`shutdown_pipeline_cache()` and `cache_shutdown()` never run. Horizon commits
+written file data only on `fsFileFlush` or a clean close — the same property
+that made the runtime log stop mid-line before `fsync` was added here. So each
+run lost its last transaction's pages *and* the rollback journal that could have
+repaired them, leaving a header written by an earlier flush over a shorter file.
+SQLite then rejects the database at `PRAGMA journal_mode`, Aurora latches
+`cache_broken`, and every pipeline is compiled from scratch on first use. The
+symptom split the user reported — menus fine, gameplay ~15-20 FPS — is what that
+looks like, because a match keeps meeting pipelines a menu never needs.
+
+Two changes, both in the current build:
+
+1. `sqlite_vfs.cpp` flushes writable handles before `fsFileClose`, honours
+   `SQLITE_FCNTL_SIZE_HINT` (one explicit `fsFileSetSize` instead of implicit
+   per-page extension), and exports `melee_nx_sqlite_flush_all()`, which
+   `kartpad_fast_exit()` calls before its own `fsync`. It must never block exit,
+   so the handle mutex is taken with a bounded `try_lock` — `abort()` from
+   inside SQLite reaches the same path — and a failed acquisition skips the
+   flush rather than deadlocking.
+2. `aurora-switch-cache-recovery.patch` quarantines an unreadable dawn or
+   pipeline cache to `<name>.corrupt`, drops its stale journal and lock, and
+   retries once on a fresh database. Derived caches are rebuildable; losing one
+   launch's compilation is far cheaper than latching caching off forever. The
+   bad copy is kept for diagnosis. A second failure means the cache path itself,
+   so it latches as before.
+
+Still unproven on hardware, and worth checking in the next capture: that a
+quiescent snapshot passes `PRAGMA quick_check`, that the second launch reports
+real hits rather than re-seeding, and that skipped-pipeline draws (now counted —
+see the `PIPELINES` log line) fall toward zero in warm steady state. Pipeline
+descriptor-cache existence is still not proof that Dawn's compiled cache is
+valid or that pipeline hits occurred.
 
 ### 5. pthread stack size + exit() wrapping
 Dawn/Tint WGSL compiler needs ~54 KB stack frames. libnx default pthread stack is
@@ -140,8 +178,9 @@ far lighter than MKW.
 does not hit target frame rate, and audio is laggy. The claim that "GPU is not the
 bottleneck" was inherited from KartPad-NX and has never been measured for melee-nx —
 treat it as untested. Known contaminants must be removed before any measurement is
-believable, chiefly the `fsync` per log line added during bring-up. The pipeline and
-shader caches also fail to open, so every run recompiles every pipeline. See
+   believable, chiefly the `fsync` per log line added during bring-up. The original
+   cache-open failure has since been replaced by an integrity problem in the latest
+   captured Dawn cache. See
 [HANDOFF-PERF-AUDIO.md](HANDOFF-PERF-AUDIO.md).
 
 ## Bring-up sequence
@@ -154,23 +193,24 @@ shader caches also fail to open, so every run recompiles every pipeline. See
 2. ~~Rewrite the aurora patches against melee-pc's actual vendored aurora~~ — done.
    See section 2b above.
 3. ~~Clone `ref/dawn` and `ref/SDL`~~ — done, copied from KartPad-NX per `docs/DEPS.md`.
-4. **`builder/build-graphics.sh all`** inside the `kartpad-dawn` Docker image — builds
-   Dawn + SDL3 for Switch. Should closely mirror KartPad-NX's known-good build. Not yet
-   run (needs the Docker toolchain, not available on this Windows host).
-5. **`builder/build-melee.sh all`** — applies the compat patch, configures, and builds
-   the NRO. Expect compile errors from melee-pc's game code under
-   `aarch64-none-elf-gcc` (struct size assertions via `DISC_ASSERT_SIZE`, warnings
-   promoted to errors, etc.) — iterate.
-6. **Boot on hardware**: once it links, test disc load, MEM1/ext-pointer behavior under
-   real memory pressure, rendering, input.
+4. ~~Build Dawn + SDL3 inside the `kartpad-dawn` Docker image~~ — completed.
+5. ~~Configure, compile, link and package the NRO with GCC C + Clang C++~~ — completed.
+   On the current layered snapshot use `build-graphics.sh prepare`, then separate
+   `build-melee.sh configure` and `build-melee.sh build`; do not force the old
+   monolithic compatibility patch through a failed reverse check.
+6. ~~Boot on hardware and reach the main menu~~ — completed 2026-09-18. Performance,
+   cache integrity, missing async-pipeline geometry, controller breadth and audio
+   latency remain active validation work.
 
 ## Confirmed by an actual build (not just static review)
 
 Docker + the `kartpad-dawn` image were available on the dev machine, so the whole
-bring-up sequence was actually run end-to-end, not just planned. Both
-`builder/build-graphics.sh all` and `builder/build-melee.sh all` now complete and
-produce a real `build/switch/melee.nro` (34 MB) from a `melee.elf` (330 MB,
-unstripped). The patch set (`builder/build-graphics.sh prepare`) applies cleanly.
+bring-up sequence was actually run end-to-end, not just planned. The original
+scripts produced a real NRO/ELF and the result later booted on hardware. The
+current 2026-09-19 optimized build is 85,879,957 bytes; its exact hash and
+deployment record are documented below. Dependency/Aurora preparation still
+reverse-detects cleanly, while the historical melee compatibility patch now has
+the overlap caveat described in `switch/patches/README.md`.
 Along the way, three real, non-obvious problems had to be found and fixed —
 none of them things static review would have caught:
 
@@ -231,11 +271,12 @@ KartPad-NX had already written for the exact same problem
 (`rust_switch_stubs.c`, plus a small local `geteuid()` shim in
 `switch/src/libc_switch.c`).
 
-This is meaningfully more confidence than the original scaffold had: every part
+This was meaningfully more confidence than the original scaffold had: every part
 of the graphics stack, the GCC/Clang toolchain split, the full patch set, and
 the final NVK-backed Vulkan link are now proven to compile and link, not just
-planned to. Hardware testing (does it actually boot and render) is the next
-open question.
+planned to. Hardware testing subsequently confirmed boot and rendering through
+the Melee main menu on 2026-09-18; later sections supersede this historical
+bring-up checkpoint.
 
 ## Known risks
 
@@ -295,7 +336,7 @@ Following the initial hardware boot, five major performance and diagnostic miles
 2. **Native Horizon SQLite VFS (`"hos"`):**
    - SQLite DB initialization failures in Dawn and Aurora pipeline caches (`unable to open database file`) were resolved by integrating a custom libnx-native VFS (`switch/src/sqlite_vfs.cpp`).
    - SQLite is compiled with `SQLITE_OS_OTHER=1` and `SQLITE_OMIT_WAL`, using `fsFs*` calls directly with atomic file replaces and custom lock tracking.
-   - Pipeline caches now persist compiled shader variants on SD card across boots, directly eliminating in-game shader compilation stutter.
+   - Cache files can now be created, but the latest captured Dawn DB is malformed. Persistence, hits, and reduced compilation remain unproven until integrity tests pass.
 
 3. **RomFS Port Menu & Lightweight Profiler:**
    - All RmlUi UI assets (`resources/`) are packed directly into the NRO's RomFS partition via `switch/CMakeLists.txt` (`ROMFS "${MELEE_PC_ROOT}/resources"`). `launcher.cpp` loads from `romfs:/resources/`.
@@ -308,7 +349,63 @@ Following the initial hardware boot, five major performance and diagnostic miles
    - Profiler is visible live inside the Port Menu and toggleable as an on-screen HUD (`fps=0` Off, `fps=1` FPS, `fps=2` Full Breakdown).
 
 4. **Audio Latency Tuning:**
-   - Hardware audio device sample frame count set to 512 (`SDL_AUDIO_DEVICE_SAMPLE_FRAMES=512`), cutting audout queue latency by half (from 21.3ms down to 10.6ms).
+   - The current build forces 1024 frames (`SDL_AUDIO_DEVICE_SAMPLE_FRAMES=1024`). Earlier notes claiming 512 was deployed were stale. Buffer tuning follows negotiated-spec and underrun instrumentation.
 
-5. **Input Polling Relaxation:**
-   - Relaxed input poll loop (`src/pc/input_poll.c`) on Switch from 1000 Hz spin to 250 Hz (`SDL_DelayNS(4ms)`), freeing CPU cycles on Cortex-A57 cores.
+5. **Input Worker Removal (2026-09-19):**
+   - Horizon controllers are already sampled through `PADRead` on the main thread. The auxiliary SDL keyboard/touch worker is no longer created on Switch, avoiding a kernel handle and the port's 8 MiB stack floor.
+
+6. **Aurora encoder-state suppression (2026-09-19):**
+   - Dusklight-derived render-pass state caches suppress identical texture bind-group and destination-alpha blend-constant calls. They reset at every pass and after custom draws. The change is built and deployed; visual and timing validation on hardware is pending.
+
+### Latest deployed optimization build (2026-09-19)
+
+The Release build completed with Cortex-A57, `-O3`, `-DNDEBUG`, PIC/PIE, Dawn,
+Aurora and NVK. It was uploaded to
+`ftp://192.168.1.171:5000/sdmc:/switch/melee-nx/melee.nro`, downloaded again,
+and verified byte-for-byte:
+
+- Size: 85,879,957 bytes
+- SHA-256: `184480f708c5f26fd22bc115ca5319b42c9e922e67d2ec07948bdf5b7742ece5`
+- Embedded patch-set ID: `d3b6815a581b4d1f401c25ad22684136acd646385a64f7af545e7b610b4d26bb`
+- SDL fallback version: 3.4.4; the pinned 3.4.10/Dusklight migration is not complete.
+
+No frame-rate, visual, input, or audio result has yet been recorded for this
+specific binary. Verify the runtime manifest before interpreting the next
+hardware logs.
+
+
+### SDL 3.4.10 / Dusklight migration and cache repair (2026-09-19, afternoon)
+
+Deployed NRO: 85,896,341 bytes, SHA-256
+`84d88dd602959e1abef4c6d35220b7838a1ed977cfb44b7c0a289d9afc3b1342`, verified by
+downloading it back and comparing bytes.
+
+- SQLite cache flush-on-exit and quarantine/rebuild — see §4 above.
+- Draws dropped because their pipeline was still compiling are counted in
+  `get_pipeline()` and reported every 60 frames with pending/ready counts.
+  Switch requests `PipelinePriority::Normal`, so those draws are simply skipped;
+  a fast frame with missing geometry is not a win, and nothing measured it.
+- melee-pc's frame profiler in `src/pc/vi.c` was gated on `getenv("MELEE_FPS")`.
+  Nothing on a Switch sets environment variables, so every hardware log to date
+  contained no frame timing whatsoever — which is why P0 of the performance plan
+  still had no baseline after a full day of work. It now defaults on under
+  `__SWITCH__` and writes its per-second `PERF` summary through `pc_log_line`,
+  so it lands in `melee-nx-runtime.log` next to whatever Aurora logged in the
+  same second. `MELEE_NO_FPS` disables it.
+- SDL moved from the 3.4.4 tree to `ref/SDL-dusklight`: pinned `release-3.4.10`,
+  plus Dusklight's Switch backend verbatim, plus a melee-nx layer that adds
+  external-graphics mode (Aurora/Dawn keeps sole ownership of
+  `nwindowGetDefault()`; no EGL/GLES is compiled in), four-player pad
+  enumeration with per-device state, instance IDs, connect/disconnect events and
+  GC analog triggers mapped to axes 4/5, and audren open/close error handling
+  with short-buffer padding and bounded failure cleanup. `MELEE_SDL_VARIANT`
+  selects `dusklight` (default) or `legacy`, each with its own build root so a
+  library is never linked against another variant's headers.
+
+One consequence to watch: the Dusklight tree builds `src/filesystem/unix`
+instead of falling through to the dummy backend, so `SDL_GetPrefPath` may now
+return a path rather than NULL. Aurora's user/cache paths on Switch are
+hardcoded to `sdmc:/switch/melee-nx/` in `src/pc/main.c` and are unaffected, but
+`music_stream.cpp` and `textures.cpp` call `SDL_GetPrefPath("", "melee-pc")`
+directly for optional custom music and textures and could now look somewhere
+new.

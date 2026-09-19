@@ -132,6 +132,28 @@ list(APPEND SWITCH_SOURCES ${GAME_DATA_SOURCES})
 
 add_executable(melee ${PC_SOURCES} ${SWITCH_SOURCES})
 target_compile_options(melee PRIVATE -mcpu=cortex-a57+crc+crypto)
+
+# Runtime provenance for hardware captures. The reference trees are ignored,
+# so a root revision alone cannot identify the source used for an NRO; pair it
+# with the melee-pc base revision and a digest of the complete applied patch
+# set. This is configure-time metadata only and never modifies a source tree.
+execute_process(COMMAND git -C "${_repo}" rev-parse --short=12 HEAD
+  OUTPUT_VARIABLE MELEE_NX_ROOT_REV OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+execute_process(COMMAND git -C "${MELEE_PC_ROOT}" rev-parse --short=12 HEAD
+  OUTPUT_VARIABLE MELEE_NX_MELEE_PC_REV OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+file(GLOB MELEE_NX_PATCH_FILES LIST_DIRECTORIES false "${CMAKE_CURRENT_LIST_DIR}/patches/*.patch")
+list(SORT MELEE_NX_PATCH_FILES)
+set(MELEE_NX_PATCH_MANIFEST "")
+foreach(_patch IN LISTS MELEE_NX_PATCH_FILES)
+  file(SHA256 "${_patch}" _patch_sha)
+  get_filename_component(_patch_name "${_patch}" NAME)
+  string(APPEND MELEE_NX_PATCH_MANIFEST "${_patch_name}:${_patch_sha};")
+endforeach()
+string(SHA256 MELEE_NX_PATCHSET_ID "${MELEE_NX_PATCH_MANIFEST}")
+target_compile_definitions(melee PRIVATE
+  MELEE_NX_ROOT_REV="${MELEE_NX_ROOT_REV}"
+  MELEE_NX_MELEE_PC_REV="${MELEE_NX_MELEE_PC_REV}"
+  MELEE_NX_PATCHSET_ID="${MELEE_NX_PATCHSET_ID}")
 target_include_directories(melee PRIVATE "${CMAKE_CURRENT_LIST_DIR}/src/game_data")
 target_link_libraries(melee PRIVATE melee_game aurora::main ${MELEE_CRYPTO_LIBS} ${MELEE_NETWORK_LIBS})
 # Rust-vs-newlib ABI bridge (mmap/getauxval/__errno_location/sysconf/execvp/

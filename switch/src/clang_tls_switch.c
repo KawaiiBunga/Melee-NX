@@ -296,7 +296,24 @@ static void* kartpad_tls_thread_trampoline(void* raw) {
 #include <switch.h>
 #include <unistd.h>
 
+/* Defined in sqlite_vfs.cpp. Skipping fini also skips every SQLite shutdown,
+   so the shader and pipeline caches are abandoned mid-transaction: their newest
+   pages and their rollback journals stay in Horizon's FS cache and are lost,
+   which is how dawn_cache.db came back with a header claiming 4569 pages over a
+   4567-page file (hardware, 2026-09-19). Flush them on the way out so the next
+   launch either reads a whole database or can roll one back. */
+void melee_nx_sqlite_flush_all(void);
+
+/* Defined in aurora (lib/aurora.cpp). Aurora's Dawn blob cache batches its
+   writes -- one journaled SQLite transaction per shader blob is thousands of
+   SD-card commits during a pipeline pre-warm -- so up to a batch of them is
+   uncommitted at any moment. Commit it before the SQLite handles are flushed
+   below, or the batch is simply lost and recompiled on the next launch. */
+void aurora_flush_caches(void);
+
 __attribute__((noreturn)) static void kartpad_fast_exit(void) {
+  aurora_flush_caches();
+  melee_nx_sqlite_flush_all();
   fflush(NULL);
   /* fd 1 and fd 2 are melee-nx-runtime.log (main_switch.cpp's
      redirect_stdio_to_sd); commit them before the FS session goes away. */

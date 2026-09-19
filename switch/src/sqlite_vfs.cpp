@@ -67,6 +67,10 @@ int close(sqlite3_file* base) {
   std::lock_guard guard(handleMutex);
   auto* shared = f->shared;
   if (--shared->references == 0) {
+    // Horizon commits written data on flush or clean close only. fsFileClose
+    // alone has been observed to drop the tail of a grown database, leaving a
+    // header that claims more pages than the file holds.
+    if (shared->mode & FsOpenMode_Write) fsFileFlush(&shared->handle);
     fsFileClose(&shared->handle);
     if (shared->deleteOnClose) fsFsDeleteFile(shared->fs, shared->path);
     auto** entry = &handles;
@@ -181,6 +185,19 @@ int control(sqlite3_file* base, int operation, void* argument) {
   }
   if (operation == SQLITE_FCNTL_HAS_MOVED) {
     *static_cast<int*>(argument) = 0; // private cache paths stay fixed while open
+    return SQLITE_OK;
+  }
+  if (operation == SQLITE_FCNTL_SIZE_HINT) {
+    // Grow the file in one explicit step rather than letting each page write
+    // extend it implicitly: fewer metadata updates, and the final size is
+    // committed by the next flush even if a page write is later lost.
+    auto* f = file(base);
+    if (f->readOnly) return SQLITE_OK;
+    const sqlite3_int64 hint = *static_cast<sqlite3_int64*>(argument);
+    std::lock_guard guard(handleMutex);
+    s64 current = 0;
+    if (R_SUCCEEDED(fsFileGetSize(&f->shared->handle, &current)) && hint > current)
+      fsFileSetSize(&f->shared->handle, hint);
     return SQLITE_OK;
   }
   return SQLITE_NOTFOUND;
@@ -320,6 +337,29 @@ sqlite3_vfs vfs = {
     nullptr, nullptr, nullptr, nullptr, randomness, sleep, currentTime, lastError, currentTime64,
     nullptr, nullptr, nullptr};
 } // namespace
+
+// Called from the exit wrapper in clang_tls_switch.c. The process exits via
+// svcExitProcess without running static destructors or any SQLite shutdown
+// (see that file's --wrap=exit rationale), so nothing else ever commits these
+// handles. Without this, the last transaction's pages and its rollback journal
+// both stay in Horizon's FS cache and die with the process: the on-disk
+// database keeps a header written by an earlier flush while its newest pages
+// are missing, and the next launch reports "database disk image is malformed"
+// and gives up shader caching entirely.
+//
+// Best effort by design. Never block exit: if another thread holds handleMutex
+// (an abort() from inside SQLite reaches here too), give up rather than
+// deadlock, and never touch the handle list without the lock.
+extern "C" void melee_nx_sqlite_flush_all(void) {
+  std::unique_lock guard(handleMutex, std::try_to_lock);
+  for (int attempt = 0; !guard.owns_lock() && attempt < 50; ++attempt) {
+    svcSleepThread(10'000'000ll); // 10 ms
+    guard.try_lock();
+  }
+  if (!guard.owns_lock()) return;
+  for (auto* shared = handles; shared; shared = shared->next)
+    if (shared->mode & FsOpenMode_Write) fsFileFlush(&shared->handle);
+}
 
 extern "C" int sqlite3_os_init() { return sqlite3_vfs_register(&vfs, 1); }
 extern "C" int sqlite3_os_end() { return SQLITE_OK; }

@@ -1,0 +1,438 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 054ec2c..7e5040b 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -3316,6 +3316,7 @@ elseif(N3DS)
+   )
+ 
+ elseif(SWITCH)
++  option(SDL_SWITCH_EXTERNAL_GRAPHICS "Switch window is rendered externally (Dawn/NVK); omit EGL/GLES" OFF)
+   # Nintendo Switch homebrew (libnx / devkitPro). Private fork backend.
+   # The devkitA64 toolchain does not predefine __SWITCH__, so add it here.
+   sdl_compile_definitions(PUBLIC "__SWITCH__")
+@@ -3366,8 +3367,10 @@ elseif(SWITCH)
+ 
+   if(SDL_VIDEO)
+     set(SDL_VIDEO_DRIVER_SWITCH 1)
+-    set(SDL_VIDEO_OPENGL_ES2 1)
+-    set(SDL_VIDEO_RENDER_OGL_ES2 1)
++    if(NOT SDL_SWITCH_EXTERNAL_GRAPHICS)
++      set(SDL_VIDEO_OPENGL_ES2 1)
++      set(SDL_VIDEO_RENDER_OGL_ES2 1)
++    endif()
+     sdl_glob_sources(
+       "${SDL3_SOURCE_DIR}/src/video/switch/*.c"
+       "${SDL3_SOURCE_DIR}/src/video/switch/*.h"
+diff --git a/src/audio/switch/SDL_switchaudio.c b/src/audio/switch/SDL_switchaudio.c
+index 29f1748..1c5fb7b 100644
+--- a/src/audio/switch/SDL_switchaudio.c
++++ b/src/audio/switch/SDL_switchaudio.c
+@@ -56,13 +56,15 @@ SWITCHAUDIO_OpenDevice(SDL_AudioDevice *device)
+ 
+     res = audrenInitialize(&arConfig);
+     if (R_FAILED(res)) {
+-        return SDL_SetError("audrenInitialize failed");
++        SDL_SetError("audrenInitialize failed: 0x%x", res);
++        goto failed;
+     }
+     device->hidden->audr_device = true;
+ 
+     res = audrvCreate(&device->hidden->driver, &arConfig, 2);
+     if (R_FAILED(res)) {
+-        return SDL_SetError("audrvCreate failed");
++        SDL_SetError("audrvCreate failed: 0x%x", res);
++        goto failed;
+     }
+     device->hidden->audr_driver = true;
+ 
+@@ -92,16 +94,27 @@ SWITCHAUDIO_OpenDevice(SDL_AudioDevice *device)
+     }
+ 
+     mpid = audrvMemPoolAdd(&device->hidden->driver, device->hidden->pool, aligned);
+-    audrvMemPoolAttach(&device->hidden->driver, mpid);
++    if (mpid < 0 || !audrvMemPoolAttach(&device->hidden->driver, mpid)) {
++        SDL_SetError("audrvMemPoolAdd/Attach failed");
++        goto failed;
++    }
+ 
+-    audrvDeviceSinkAdd(&device->hidden->driver, AUDREN_DEFAULT_DEVICE_NAME, 2, sink_channels);
++    if (audrvDeviceSinkAdd(&device->hidden->driver, AUDREN_DEFAULT_DEVICE_NAME, 2, sink_channels) < 0) {
++        SDL_SetError("audrvDeviceSinkAdd failed");
++        goto failed;
++    }
+ 
+     res = audrenStartAudioRenderer();
+     if (R_FAILED(res)) {
+-        return SDL_SetError("audrenStartAudioRenderer failed");
++        SDL_SetError("audrenStartAudioRenderer failed: 0x%x", res);
++        goto failed;
+     }
++    device->hidden->audr_started = true;
+ 
+-    audrvVoiceInit(&device->hidden->driver, 0, device->spec.channels, PcmFormat_Int16, device->spec.freq);
++    if (!audrvVoiceInit(&device->hidden->driver, 0, device->spec.channels, PcmFormat_Int16, device->spec.freq)) {
++        SDL_SetError("audrvVoiceInit failed");
++        goto failed;
++    }
+     audrvVoiceSetDestinationMix(&device->hidden->driver, 0, AUDREN_FINAL_MIX_ID);
+     if (device->spec.channels == 1) {
+         audrvVoiceSetMixFactor(&device->hidden->driver, 0, 1.0f, 0, 0);
+@@ -118,6 +131,10 @@ SWITCHAUDIO_OpenDevice(SDL_AudioDevice *device)
+ 
+     return true;
+ failed:
++    if (device->hidden->audr_started) {
++        audrenStopAudioRenderer();
++        device->hidden->audr_started = false;
++    }
+     if (device->hidden->buffer_tmp) {
+         SDL_free(device->hidden->buffer_tmp);
+         device->hidden->buffer_tmp = NULL;
+@@ -140,7 +157,9 @@ failed:
+ static bool
+ SWITCHAUDIO_PlayDevice(SDL_AudioDevice *device, const Uint8 *buffer, int buflen)
+ {
+-    (void)buflen;
++    if (buflen < 0 || buflen > device->buffer_size) {
++        return SDL_SetError("Invalid Switch audio buffer size %d (capacity %d)", buflen, device->buffer_size);
++    }
+     int current = -1;
+     for (int i = 0; i < NUM_AUDIO_BUFFERS; i++) {
+         if (device->hidden->buffer[i].state == AudioDriverWaveBufState_Free
+@@ -151,16 +170,24 @@ SWITCHAUDIO_PlayDevice(SDL_AudioDevice *device, const Uint8 *buffer, int buflen)
+     }
+ 
+     if (current >= 0) {
+-        Uint8 *ptr = (Uint8 *) (device->hidden->pool + ((u64)current * (u64)device->buffer_size));
+-        SDL_memcpy(ptr, buffer, (size_t)device->buffer_size);
++        Uint8 *ptr = (Uint8 *)device->hidden->pool + ((size_t)current * (size_t)device->buffer_size);
++        SDL_memcpy(ptr, buffer, (size_t)buflen);
++        if (buflen < device->buffer_size) {
++            SDL_memset(ptr + buflen, device->silence_value, (size_t)(device->buffer_size - buflen));
++        }
+         armDCacheFlush(ptr, (u64)device->buffer_size);
+-        audrvVoiceAddWaveBuf(&device->hidden->driver, 0, &device->hidden->buffer[current]);
++        if (!audrvVoiceAddWaveBuf(&device->hidden->driver, 0, &device->hidden->buffer[current])) {
++            return SDL_SetError("audrvVoiceAddWaveBuf failed");
++        }
+     }
+     else if (!audrvVoiceIsPlaying(&device->hidden->driver, 0)) {
+         audrvVoiceStart(&device->hidden->driver, 0);
+     }
+ 
+-    audrvUpdate(&device->hidden->driver);
++    Result res = audrvUpdate(&device->hidden->driver);
++    if (R_FAILED(res)) {
++        return SDL_SetError("audrvUpdate failed: 0x%x", res);
++    }
+ 
+     if (current >= 0) {
+         while (device->hidden->buffer[current].state != AudioDriverWaveBufState_Playing) {
+@@ -219,6 +246,11 @@ SWITCHAUDIO_CloseDevice(SDL_AudioDevice *device)
+         return;
+     }
+ 
++    if (device->hidden->audr_started) {
++        audrenStopAudioRenderer();
++        device->hidden->audr_started = false;
++    }
++
+     if (device->hidden->audr_driver) {
+         audrvClose(&device->hidden->driver);
+     }
+diff --git a/src/audio/switch/SDL_switchaudio.h b/src/audio/switch/SDL_switchaudio.h
+index 4c72670..ad3cecd 100644
+--- a/src/audio/switch/SDL_switchaudio.h
++++ b/src/audio/switch/SDL_switchaudio.h
+@@ -35,6 +35,7 @@ struct SDL_PrivateAudioData
+     void *pool;
+     bool audr_device;
+     bool audr_driver;
++    bool audr_started;
+ };
+ 
+ #endif /* SDL_switchaudio_h_ */
+diff --git a/src/joystick/switch/SDL_sysjoystick.c b/src/joystick/switch/SDL_sysjoystick.c
+index 9687150..1cd0995 100644
+--- a/src/joystick/switch/SDL_sysjoystick.c
++++ b/src/joystick/switch/SDL_sysjoystick.c
+@@ -49,24 +49,87 @@ static const u64 button_map[] = {
+     HidNpadButton_Right,  // 15
+ };
+ #define NB_BUTTONS ((int)SDL_arraysize(button_map))
++#define SWITCH_MAX_PLAYERS 4
+ 
+-static PadState g_pad;
++struct joystick_hwdata
++{
++    int slot;
++    u64 previous_buttons;
++};
++
++static PadState g_pads[SWITCH_MAX_PLAYERS];
++static bool g_connected[SWITCH_MAX_PLAYERS];
++static SDL_JoystickID g_instance_ids[SWITCH_MAX_PLAYERS];
++static SDL_JoystickID g_next_instance_id = 1;
++
++static int SWITCH_DeviceIndexToSlot(int device_index)
++{
++    for (int slot = 0; slot < SWITCH_MAX_PLAYERS; ++slot) {
++        if (g_connected[slot] && device_index-- == 0) {
++            return slot;
++        }
++    }
++    return -1;
++}
++
++static void SWITCH_UpdateConnections(bool send_events)
++{
++    for (int slot = 0; slot < SWITCH_MAX_PLAYERS; ++slot) {
++        padUpdate(&g_pads[slot]);
++        const bool connected = padIsConnected(&g_pads[slot]);
++        if (connected == g_connected[slot]) {
++            continue;
++        }
++
++        g_connected[slot] = connected;
++        if (connected) {
++            g_instance_ids[slot] = g_next_instance_id++;
++            if (send_events) {
++                SDL_PrivateJoystickAdded(g_instance_ids[slot]);
++            }
++        } else {
++            const SDL_JoystickID removed = g_instance_ids[slot];
++            g_instance_ids[slot] = 0;
++            if (send_events && removed != 0) {
++                SDL_PrivateJoystickRemoved(removed);
++            }
++        }
++    }
++}
+ 
+ static bool SWITCH_JoystickInit(void)
+ {
+-    padConfigureInput(1, HidNpadStyleSet_NpadStandard);
+-    padInitializeDefault(&g_pad);
+-    SDL_PrivateJoystickAdded(1);
++    SDL_zeroa(g_connected);
++    SDL_zeroa(g_instance_ids);
++    g_next_instance_id = 1;
++
++    padConfigureInput(SWITCH_MAX_PLAYERS, HidNpadStyleSet_NpadStandard | HidNpadStyleTag_NpadGc);
++    padInitialize(&g_pads[0], HidNpadIdType_No1, HidNpadIdType_Handheld);
++    padInitialize(&g_pads[1], HidNpadIdType_No2);
++    padInitialize(&g_pads[2], HidNpadIdType_No3);
++    padInitialize(&g_pads[3], HidNpadIdType_No4);
++
++    SWITCH_UpdateConnections(false);
++    for (int slot = 0; slot < SWITCH_MAX_PLAYERS; ++slot) {
++        if (g_connected[slot]) {
++            SDL_PrivateJoystickAdded(g_instance_ids[slot]);
++        }
++    }
+     return true;
+ }
+ 
+ static int SWITCH_JoystickGetCount(void)
+ {
+-    return 1;
++    int count = 0;
++    for (int slot = 0; slot < SWITCH_MAX_PLAYERS; ++slot) {
++        count += g_connected[slot] ? 1 : 0;
++    }
++    return count;
+ }
+ 
+ static void SWITCH_JoystickDetect(void)
+ {
++    SWITCH_UpdateConnections(true);
+ }
+ 
+ static bool SWITCH_JoystickIsDevicePresent(Uint16 vendor_id, Uint16 product_id, Uint16 version, const char *name)
+@@ -91,7 +154,7 @@ static int SWITCH_JoystickGetDeviceSteamVirtualGamepadSlot(int device_index)
+ 
+ static int SWITCH_JoystickGetDevicePlayerIndex(int device_index)
+ {
+-    return -1;
++    return SWITCH_DeviceIndexToSlot(device_index);
+ }
+ 
+ static void SWITCH_JoystickSetDevicePlayerIndex(int device_index, int player_index)
+@@ -100,18 +163,30 @@ static void SWITCH_JoystickSetDevicePlayerIndex(int device_index, int player_ind
+ 
+ static SDL_GUID SWITCH_JoystickGetDeviceGUID(int device_index)
+ {
++    (void)device_index;
+     return SDL_CreateJoystickGUIDForName("Nintendo Switch Controller");
+ }
+ 
+ static SDL_JoystickID SWITCH_JoystickGetDeviceInstanceID(int device_index)
+ {
+-    return device_index + 1;
++    const int slot = SWITCH_DeviceIndexToSlot(device_index);
++    return slot >= 0 ? g_instance_ids[slot] : 0;
+ }
+ 
+ static bool SWITCH_JoystickOpen(SDL_Joystick *joystick, int device_index)
+ {
++    const int slot = SWITCH_DeviceIndexToSlot(device_index);
++    if (slot < 0) {
++        return SDL_SetError("No Nintendo Switch controller at device index %d", device_index);
++    }
++
++    joystick->hwdata = (struct joystick_hwdata *)SDL_calloc(1, sizeof(*joystick->hwdata));
++    if (!joystick->hwdata) {
++        return false;
++    }
++    joystick->hwdata->slot = slot;
+     joystick->nbuttons = NB_BUTTONS;
+-    joystick->naxes = 4; // left stick X/Y, right stick X/Y
++    joystick->naxes = 6; // left/right sticks plus analog-compatible L/R triggers
+     joystick->nhats = 0;
+     return true;
+ }
+@@ -153,13 +228,21 @@ static Sint16 clamp_axis(int v)
+ 
+ static void SWITCH_JoystickUpdate(SDL_Joystick *joystick)
+ {
+-    static u64 previous = 0;
++    if (!joystick->hwdata) {
++        return;
++    }
++
++    const int slot = joystick->hwdata->slot;
++    PadState *pad = &g_pads[slot];
+     Uint64 timestamp = SDL_GetTicksNS();
+ 
+-    padUpdate(&g_pad);
++    padUpdate(pad);
++    if (!padIsConnected(pad)) {
++        return;
++    }
+ 
+-    u64 held = padGetButtons(&g_pad);
+-    u64 changed = held ^ previous;
++    u64 held = padGetButtons(pad);
++    u64 changed = held ^ joystick->hwdata->previous_buttons;
+     if (changed) {
+         for (int i = 0; i < NB_BUTTONS; i++) {
+             if (changed & button_map[i]) {
+@@ -168,18 +251,28 @@ static void SWITCH_JoystickUpdate(SDL_Joystick *joystick)
+             }
+         }
+     }
+-    previous = held;
++    joystick->hwdata->previous_buttons = held;
+ 
+-    HidAnalogStickState l = padGetStickPos(&g_pad, 0);
+-    HidAnalogStickState r = padGetStickPos(&g_pad, 1);
++    HidAnalogStickState l = padGetStickPos(pad, 0);
++    HidAnalogStickState r = padGetStickPos(pad, 1);
+     SDL_SendJoystickAxis(timestamp, joystick, 0, clamp_axis(l.x));
+     SDL_SendJoystickAxis(timestamp, joystick, 1, clamp_axis(-l.y));
+     SDL_SendJoystickAxis(timestamp, joystick, 2, clamp_axis(r.x));
+     SDL_SendJoystickAxis(timestamp, joystick, 3, clamp_axis(-r.y));
++
++    const bool has_gc_triggers = (padGetStyleSet(pad) & HidNpadStyleTag_NpadGc) != 0;
++    const int trigger_l = has_gc_triggers ? ((int)padGetGcTriggerPos(pad, 0) * 2 - 32768)
++                                          : ((held & HidNpadButton_L) ? 32767 : -32768);
++    const int trigger_r = has_gc_triggers ? ((int)padGetGcTriggerPos(pad, 1) * 2 - 32768)
++                                          : ((held & HidNpadButton_R) ? 32767 : -32768);
++    SDL_SendJoystickAxis(timestamp, joystick, 4, clamp_axis(trigger_l));
++    SDL_SendJoystickAxis(timestamp, joystick, 5, clamp_axis(trigger_r));
+ }
+ 
+ static void SWITCH_JoystickClose(SDL_Joystick *joystick)
+ {
++    SDL_free(joystick->hwdata);
++    joystick->hwdata = NULL;
+ }
+ 
+ static void SWITCH_JoystickQuit(void)
+@@ -194,8 +287,8 @@ static bool SWITCH_JoystickGetGamepadMapping(int device_index, SDL_GamepadMappin
+     out->y = (SDL_InputMapping){ EMappingKind_Button, 3 };
+     out->leftshoulder = (SDL_InputMapping){ EMappingKind_Button, 6 };
+     out->rightshoulder = (SDL_InputMapping){ EMappingKind_Button, 7 };
+-    out->lefttrigger = (SDL_InputMapping){ EMappingKind_Button, 4 };
+-    out->righttrigger = (SDL_InputMapping){ EMappingKind_Button, 5 };
++    out->lefttrigger = (SDL_InputMapping){ EMappingKind_Axis, 4 };
++    out->righttrigger = (SDL_InputMapping){ EMappingKind_Axis, 5 };
+     out->back = (SDL_InputMapping){ EMappingKind_Button, 8 };
+     out->start = (SDL_InputMapping){ EMappingKind_Button, 9 };
+     out->leftstick = (SDL_InputMapping){ EMappingKind_Button, 10 };
+diff --git a/src/video/switch/SDL_switchvideo.c b/src/video/switch/SDL_switchvideo.c
+index 156ce0a..07f661c 100644
+--- a/src/video/switch/SDL_switchvideo.c
++++ b/src/video/switch/SDL_switchvideo.c
+@@ -55,6 +55,8 @@ static void SWITCH_GetDisplaySize(int *w, int *h)
+ // EGL / OpenGL ES backed by libnx's default NWindow and switch-mesa.
+ // ---------------------------------------------------------------------------
+ 
++// External-graphics builds let Dawn/NVK own the default NWindow.
++#ifdef SDL_VIDEO_OPENGL_ES2
+ static bool SWITCH_GL_LoadLibrary(SDL_VideoDevice *_this, const char *path)
+ {
+     // EGL/GLESv2 are statically linked from the portlibs; nothing to dlopen.
+@@ -212,6 +214,7 @@ static bool SWITCH_GL_DestroyContext(SDL_VideoDevice *_this, SDL_GLContext conte
+     v->egl_initialized = false;
+     return true;
+ }
++#endif // SDL_VIDEO_OPENGL_ES2
+ 
+ // ---------------------------------------------------------------------------
+ // Display / window management
+@@ -349,9 +352,11 @@ static SDL_VideoDevice *SWITCH_CreateDevice(void)
+         SDL_free(device);
+         return NULL;
+     }
++#ifdef SDL_VIDEO_OPENGL_ES2
+     data->display = EGL_NO_DISPLAY;
+     data->context = EGL_NO_CONTEXT;
+     data->surface = EGL_NO_SURFACE;
++#endif
+     device->internal = data;
+ 
+     device->VideoInit = SWITCH_VideoInit;
+@@ -360,6 +365,7 @@ static SDL_VideoDevice *SWITCH_CreateDevice(void)
+     device->DestroyWindow = SWITCH_DestroyWindow;
+     device->PumpEvents = SWITCH_PumpEvents;
+ 
++#ifdef SDL_VIDEO_OPENGL_ES2
+     device->GL_LoadLibrary = SWITCH_GL_LoadLibrary;
+     device->GL_GetProcAddress = SWITCH_GL_GetProcAddress;
+     device->GL_UnloadLibrary = SWITCH_GL_UnloadLibrary;
+@@ -369,6 +375,7 @@ static SDL_VideoDevice *SWITCH_CreateDevice(void)
+     device->GL_GetSwapInterval = SWITCH_GL_GetSwapInterval;
+     device->GL_SwapWindow = SWITCH_GL_SwapWindow;
+     device->GL_DestroyContext = SWITCH_GL_DestroyContext;
++#endif
+ 
+     device->device_caps = VIDEO_DEVICE_CAPS_FULLSCREEN_ONLY;
+ 
+diff --git a/src/video/switch/SDL_switchvideo.h b/src/video/switch/SDL_switchvideo.h
+index b572651..0cddd45 100644
+--- a/src/video/switch/SDL_switchvideo.h
++++ b/src/video/switch/SDL_switchvideo.h
+@@ -24,18 +24,22 @@
+ #include "SDL_internal.h"
+ #include "../SDL_sysvideo.h"
+ 
++#ifdef SDL_VIDEO_OPENGL_ES2
+ #include <EGL/egl.h>
+ #include <EGL/eglext.h>
++#endif
+ 
+ // Per-device state: a single EGL context bound to the Switch default NWindow.
+ struct SDL_VideoData
+ {
+     bool egl_initialized;
++#ifdef SDL_VIDEO_OPENGL_ES2
+     EGLDisplay display;
+     EGLContext context;
+     EGLSurface surface;
+     EGLConfig config;
+     int swap_interval;
++#endif
+     SDL_DisplayID display_id;   // our single display
+     int mode_w, mode_h;         // last advertised size
+     Uint64 last_mode_poll;      // SDL_GetTicks() of last dock-state check

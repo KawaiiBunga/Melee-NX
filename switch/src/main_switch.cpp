@@ -10,6 +10,7 @@
 
 #include "game_data/game_data_gate.h"
 
+#include <SDL3/SDL_version.h>
 #include <switch.h>
 #include <cstdlib>
 #include <cstdio>
@@ -26,6 +27,16 @@
 #include <unistd.h>
 
 extern "C" int melee_main_impl(int argc, char** argv);
+
+#ifndef MELEE_NX_ROOT_REV
+#define MELEE_NX_ROOT_REV "unknown"
+#endif
+#ifndef MELEE_NX_MELEE_PC_REV
+#define MELEE_NX_MELEE_PC_REV "unknown"
+#endif
+#ifndef MELEE_NX_PATCHSET_ID
+#define MELEE_NX_PATCHSET_ID "unknown"
+#endif
 
 namespace {
 
@@ -347,6 +358,23 @@ void set_file_cache_budget() {
                 static_cast<unsigned long long>(usedBytes / (1024 * 1024)), budgetMb);
 }
 
+void log_build_manifest() {
+    const int linkedSdl = SDL_GetVersion();
+    std::printf(
+        "[melee-nx] manifest: build=%s root=%s melee-pc=%s patchset=%.16s\n",
+        kBuildStamp, MELEE_NX_ROOT_REV, MELEE_NX_MELEE_PC_REV, MELEE_NX_PATCHSET_ID);
+    std::printf(
+        "[melee-nx] SDL headers=%d.%d.%d linked=%d.%d.%d revision=%s\n",
+        SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_MICRO_VERSION,
+        SDL_VERSIONNUM_MAJOR(linkedSdl), SDL_VERSIONNUM_MINOR(linkedSdl),
+        SDL_VERSIONNUM_MICRO(linkedSdl), SDL_GetRevision());
+    std::printf(
+        "[melee-nx] runtime config: audio_frames=%s fifo=thread fifo_batch=16 input=PADRead-main\n",
+        getenv("SDL_AUDIO_DEVICE_SAMPLE_FRAMES")
+            ? getenv("SDL_AUDIO_DEVICE_SAMPLE_FRAMES")
+            : "default");
+}
+
 }  // namespace
 
 extern "C" int main(int argc, char** argv) {
@@ -400,6 +428,7 @@ extern "C" int main(int argc, char** argv) {
     // Audio buffer: 1024 sample frames paired with 4 audout buffers ensures continuous, glitch-free output.
     setenv("SDL_AUDIO_DEVICE_SAMPLE_FRAMES", "1024", 1);
     set_file_cache_budget();
+    log_build_manifest();
     melee_boot_trace("08 cache-budget  MELEE_CACHE_MAX_MB=%s",
                getenv("MELEE_CACHE_MAX_MB") ? getenv("MELEE_CACHE_MAX_MB") : "<unset>");
 

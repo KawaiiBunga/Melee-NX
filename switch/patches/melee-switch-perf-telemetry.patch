@@ -1,0 +1,58 @@
+diff --git a/src/pc/vi.c b/src/pc/vi.c
+--- a/src/pc/vi.c
++++ b/src/pc/vi.c
+@@ -79,6 +79,10 @@
+     static u32 frame_late_33;
+     static u64 sleep_worst_over_ns;
+     static u64 frame_prev_ns;
++#if defined(__SWITCH__)
++    /* Switch pacing comes from FIFO present, so nothing writes this here. */
++    (void)sleep_worst_over_ns;
++#endif
+ 
+     if (s_in_frame) {
+         u64 sub_t0 = SDL_GetTicksNS();
+@@ -89,7 +93,14 @@
+     aurora_heap_check();    /* no-op unless MELEE_HEAP_CHECK is set */
+     pc_widescreen_update(); /* Auto mode follows window resizes. */
+     if (fps_log < 0) {
++#if defined(__SWITCH__)
++        /* The Switch has no shell to export MELEE_FPS from, so every hardware
++         * run so far produced a log with no frame timing in it at all. Default
++         * it on here; MELEE_NO_FPS turns it back off. */
++        fps_log = getenv("MELEE_NO_FPS") == NULL;
++#else
+         fps_log = getenv("MELEE_FPS") != NULL;
++#endif
+         fps_t0 = SDL_GetTicks();
+     }
+     u64 now = SDL_GetTicks();
+@@ -150,12 +161,28 @@
+         }
+         frame_prev_ns = now_ns;
+         if (now - fps_t0 >= 1000) {
++#if defined(__SWITCH__)
++            /* Through pc_log_line so it interleaves with aurora's records in
++             * melee-nx-runtime.log: a compile stall and a disc read are
++             * indistinguishable in a frame average, but obvious next to
++             * whatever was logged in the same second. The stage split is the
++             * one the overlay already tracks -- sim is game logic plus GX
++             * recording up to the frame boundary, submit is aurora_end_frame,
++             * wait is aurora_begin_frame (FIFO present pacing). */
++            pc_log_line("PERF fps %.1f frame %.1fms peak %.1fms sim %.1fms "
++                        "submit %.1fms wait %.1fms worst %.1fms late>20ms %u late>33ms %u",
++                        fps_n * 1000.0 / (double)(now - fps_t0), (double)s_prof_frame_ms,
++                        (double)s_prof_peak_ms, (double)s_prof_sim_ms, (double)s_prof_submit_ms,
++                        (double)s_prof_wait_ms, frame_worst_ns / 1e6, frame_late_20,
++                        frame_late_33);
++#else
+             fprintf(stderr,
+                 "fps %.1f worst %.1fms late>20ms %u late>33ms %u "
+                 "sleep_overshoot %.1fms\n",
+                 fps_n * 1000.0 / (double)(now - fps_t0), frame_worst_ns / 1e6, frame_late_20,
+                 frame_late_33, sleep_worst_over_ns / 1e6);
+             fflush(stderr);
++#endif
+             fps_t0 = now;
+             fps_n = 0;
+             frame_worst_ns = 0;

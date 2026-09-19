@@ -17,12 +17,45 @@ case "$stage" in prepare|dawn|sdl|aurora|all) ;;
 [[ "$jobs" =~ ^[1-9][0-9]*$ ]] || { echo "MELEE_BUILD_JOBS must be positive" >&2; exit 64; }
 
 dawn="$repo/ref/dawn"
-sdl="$repo/ref/SDL"
 aurora="$repo/ref/melee-pc/extern/aurora"
 dawn_build="$repo/build/dawn-switch"
-sdl_build="$repo/build/sdl-switch"
+
+# SDL variant. "dusklight" is pinned SDL release-3.4.10 plus Dusklight's Switch
+# backend and this port's changes on top; "legacy" is the original 3.4.4 tree,
+# kept as a comparison/fallback artifact (docs/PLAN-CPU-SDL-DUSKLIGHT.md P2).
+# Each variant gets its own source and build root so switching between them
+# never links a library against mismatched headers.
+sdl_variant="${MELEE_SDL_VARIANT:-dusklight}"
+case "$sdl_variant" in
+  dusklight) sdl="$repo/ref/SDL-dusklight"; sdl_build="$repo/build/sdl-switch-dusklight" ;;
+  legacy)    sdl="$repo/ref/SDL";           sdl_build="$repo/build/sdl-switch" ;;
+  *) echo "MELEE_SDL_VARIANT must be dusklight or legacy" >&2; exit 64 ;;
+esac
 
 require_file() { [[ -f "$1" ]] || { echo "Required source missing: $1" >&2; exit 66; }; }
+
+# The two SDL patches are one stack, not two independent patches: the Dusklight
+# backend patch adds src/{video,audio,joystick}/switch, and the melee-nx patch
+# edits those same new files. Once the top layer is applied the base no longer
+# reverse-identifies, so reverse-check the top layer and treat the whole stack
+# as done -- the same layering caveat AGENTS.md records for melee-pc. --recount
+# is required: the upstream Dusklight patch's hunk line counts do not match its
+# bodies.
+apply_sdl_stack() {
+  local tree="$1"; shift
+  local top="${!#}"
+  require_file "$top"
+  if git -C "$tree" apply --recount --ignore-space-change --reverse --check "$top" >/dev/null 2>&1; then
+    printf 'Already applied: SDL patch stack (%s)\n' "${top##*/}"
+    return
+  fi
+  local patch_file
+  for patch_file in "$@"; do
+    require_file "$patch_file"
+    git -C "$tree" apply --recount --ignore-space-change "$patch_file"
+    printf 'Applied: %s\n' "${patch_file##*/}"
+  done
+}
 
 apply_patch_once() {
   local tree="$1" patch_file="$2"
@@ -41,14 +74,23 @@ apply_patch_once() {
 prepare() {
   require_file "$dawn/CMakeLists.txt"
   require_file "$dawn/third_party/abseil-cpp/absl/base/config.h"
-  require_file "$sdl/src/video/switch/SDL_switchvideo.c"
   require_file "$aurora/CMakeLists.txt"
+  if [[ "$sdl_variant" == dusklight ]]; then
+    require_file "$sdl/CMakeLists.txt"
+  else
+    require_file "$sdl/src/video/switch/SDL_switchvideo.c"
+  fi
 
   apply_patch_once "$dawn"                        "$repo/switch/patches/dawn-switch-libnx.patch"
   apply_patch_once "$dawn/third_party/abseil-cpp" "$repo/switch/patches/dawn-abseil-switch.patch"
   apply_patch_once "$dawn"                        "$repo/switch/patches/dawn-switch-surface.patch"
   apply_patch_once "$dawn"                        "$repo/switch/patches/dawn-switch-renderdoc.patch"
-  apply_patch_once "$sdl"                         "$repo/switch/patches/sdl-switch-external-graphics.patch"
+  if [[ "$sdl_variant" == dusklight ]]; then
+    apply_sdl_stack "$sdl" "$repo/switch/patches/sdl-dusklight-switch.patch" \
+                           "$repo/switch/patches/sdl-dusklight-melee-nx.patch"
+  else
+    apply_patch_once "$sdl"                       "$repo/switch/patches/sdl-switch-external-graphics.patch"
+  fi
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-surface.patch"
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-dawn-backends.patch"
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-status-compat.patch"
@@ -56,6 +98,9 @@ prepare() {
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-no-mmap.patch"
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-pipeline-cache-io-lock.patch"
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-mem1-window.patch"
+  apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-encoder-state-cache.patch"
+  # Layers on aurora-switch-pipeline-cache-io-lock.patch; apply after it.
+  apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-cache-recovery.patch"
 }
 
 build_dawn() {
@@ -82,4 +127,4 @@ case "$stage" in
   aurora)  echo "Aurora is built as part of build-melee.sh (add_subdirectory)." ;;
   all)     prepare; build_dawn; build_sdl ;;
 esac
-echo "build-graphics.sh [$stage] done."
+echo "build-graphics.sh [$stage] done (SDL variant: $sdl_variant)."

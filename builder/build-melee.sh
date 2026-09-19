@@ -20,6 +20,15 @@ case "$stage" in patch|configure|build|all) ;;
 melee_pc="$repo/ref/melee-pc"
 build_dir="$repo/build/switch"
 
+# Must match build-graphics.sh: each SDL variant has its own source and build
+# root, and the library has to be linked against the headers it was built from.
+sdl_variant="${MELEE_SDL_VARIANT:-dusklight}"
+case "$sdl_variant" in
+  dusklight) sdl_source="$repo/ref/SDL-dusklight"; sdl_build="$repo/build/sdl-switch-dusklight" ;;
+  legacy)    sdl_source="$repo/ref/SDL";           sdl_build="$repo/build/sdl-switch" ;;
+  *) echo "MELEE_SDL_VARIANT must be dusklight or legacy" >&2; exit 64 ;;
+esac
+
 require_file() { [[ -f "$1" ]] || { echo "Required file missing: $1" >&2; exit 66; }; }
 
 apply_patch_once() {
@@ -43,6 +52,8 @@ do_patch() {
     apply_patch_once "$melee_pc" "$p"
     # Disc pointer slots resolved through MEM1's 4GB window; see src/pc/disc.h.
     apply_patch_once "$melee_pc" "$repo/switch/patches/melee-switch-disc-ptr-window.patch"
+    apply_patch_once "$melee_pc" "$repo/switch/patches/melee-switch-input-worker.patch"
+    apply_patch_once "$melee_pc" "$repo/switch/patches/melee-switch-perf-telemetry.patch"
   else
     echo "WARNING: melee-switch-gcc-compat.patch not yet created — skipping patch step."
     echo "         This patch removes -no-pie/-Ttext-segment and adds Switch path overrides."
@@ -52,7 +63,7 @@ do_patch() {
 
 do_configure() {
   require_file "$repo/build/dawn-switch/src/dawn/native/libwebgpu_dawn.a"
-  require_file "$repo/build/sdl-switch/libSDL3.a"
+  require_file "$sdl_build/libSDL3.a"
   # Mesa/NVK is Switch's only real Vulkan implementation (devkitPro's own
   # switch-mesa package is EGL/GLES-only) and needs its own Rust-enabled cross
   # build -- see docs/DEPS.md. Defaults to the path this repo's docker run
@@ -64,8 +75,8 @@ do_configure() {
     "-DCMAKE_EXE_LINKER_FLAGS=-Wl,--wrap=pthread_create -Wl,--wrap=exit -Wl,--wrap=abort -Wl,--wrap=_exit -Wl,--wrap=__cxa_throw -Wl,--wrap=pthread_detach -Wl,--wrap=pthread_join" \
     -DMELEE_DAWN_SOURCE="$repo/ref/dawn" \
     -DMELEE_DAWN_BUILD="$repo/build/dawn-switch" \
-    -DMELEE_SDL_SOURCE="$repo/ref/SDL" \
-    -DMELEE_SDL_BUILD="$repo/build/sdl-switch" \
+    -DMELEE_SDL_SOURCE="$sdl_source" \
+    -DMELEE_SDL_BUILD="$sdl_build" \
     -DMESA_NVK_ROOT="$MESA_NVK_ROOT"
 }
 
@@ -79,4 +90,4 @@ case "$stage" in
   build)     do_build ;;
   all)       do_patch; do_configure; do_build ;;
 esac
-echo "build-melee.sh [$stage] done."
+echo "build-melee.sh [$stage] done (SDL variant: $sdl_variant)."

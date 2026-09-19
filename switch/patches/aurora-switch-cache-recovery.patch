@@ -1,0 +1,203 @@
+diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
+--- a/lib/gfx/pipeline_cache.cpp
++++ b/lib/gfx/pipeline_cache.cpp
+@@ -15,6 +15,8 @@
+ #include <algorithm>
+ #include <atomic>
+ #include <condition_variable>
++#include <cstdint>
++#include <cstdio>
+ #include <deque>
+ #include <filesystem>
+ #include <limits>
+@@ -62,6 +64,11 @@
+ static std::mutex g_pipelineMutex;
+ static bool g_hasPipelineThread = false;
+ static size_t g_pipelinesPerFrame = 0;
++// Draws dropped because their pipeline was still compiling, plus the 60-frame
++// accumulator begin_pipeline_frame reports from.
++static std::atomic_uint64_t g_pipelineDrawMisses{0};
++static uint64_t g_pipelineDrawMissWindow = 0;
++static uint64_t g_pipelineStatFrames = 0;
+ // For synchronous pipeline fallback (OpenGL)
+ #ifdef NDEBUG
+ constexpr size_t BuildPipelinesPerFrame = 5;
+@@ -740,7 +747,7 @@
+   }
+ }
+ 
+-static bool prepare_pipeline_cache_db() {
++static bool prepare_pipeline_cache_db_once() {
+   if (g_pipelineCacheBroken) {
+     return false;
+   }
+@@ -861,6 +868,59 @@
+   return true;
+ }
+ 
++// The descriptor seed is derived data, like the dawn cache. A database torn by
++// an unclean exit used to poison every later launch; quarantine it once and
++// rebuild rather than losing pipeline warm-up permanently.
++static bool quarantine_pipeline_cache_file(const std::string& path) {
++  const auto bad = path + ".corrupt";
++  const auto journal = path + "-journal";
++  const auto lock = path + ".lock";
++
++  std::remove(bad.c_str());
++  if (std::rename(path.c_str(), bad.c_str()) != 0) {
++    if (std::remove(path.c_str()) != 0) {
++      Log.error("Failed to quarantine unreadable pipeline cache at '{}'", path);
++      return false;
++    }
++    Log.warn("Deleted unreadable pipeline cache '{}' (could not rename it aside)", path);
++  } else {
++    Log.warn("Quarantined unreadable pipeline cache to '{}'; rebuilding", bad);
++  }
++  // Both belong to the file that just moved.
++  std::remove(journal.c_str());
++  std::remove(lock.c_str());
++  return true;
++}
++
++static bool prepare_pipeline_cache_db() {
++  static bool rebuildTried = false;
++
++  if (prepare_pipeline_cache_db_once()) {
++    return true;
++  }
++  // Every later call also lands here once g_pipelineCacheBroken is latched.
++  // Only the attempt that actually failed to open may move the file aside.
++  if (rebuildTried) {
++    return false;
++  }
++  rebuildTried = true;
++
++  const auto path = io::fs_path_to_string(io::fs_path_from_string(g_config.cachePath) / "pipeline_cache.db");
++  if (!quarantine_pipeline_cache_file(path)) {
++    return false;
++  }
++
++  // pipeline_cache_abort() latched this on the way out; clear it so the one
++  // retry can run. A second failure leaves it latched for good.
++  g_pipelineCacheBroken = false;
++  if (!prepare_pipeline_cache_db_once()) {
++    return false;
++  }
++
++  Log.info("Pipeline cache opened after rebuild");
++  return true;
++}
++
+ static void prune_old_pipeline_cache_versions() {
+   if (!prepare_pipeline_cache_db()) {
+     return;
+@@ -1233,6 +1293,31 @@
+   if (!g_hasPipelineThread) {
+     g_pipelinesPerFrame = 0;
+   }
++  // Switch requests Normal priority, so a draw whose pipeline is not ready yet
++  // is simply skipped (see find_pipeline's Switch branch). Fast frames with
++  // missing geometry are not a win, and until now nothing counted them -- this
++  // is the difference between "the frame budget fits" and "half the stage was
++  // not drawn". Reported from the frame boundary, next to vi.c's PERF line.
++  const uint64_t misses = g_pipelineDrawMisses.exchange(0, std::memory_order_relaxed);
++  const uint64_t frames = ++g_pipelineStatFrames;
++  if (frames >= 60) {
++    g_pipelineStatFrames = 0;
++    const uint64_t window = g_pipelineDrawMissWindow + misses;
++    g_pipelineDrawMissWindow = 0;
++    size_t pending = 0;
++    size_t ready = 0;
++    {
++      std::lock_guard guard{g_pipelineMutex};
++      pending = g_pendingPipelines.size();
++      ready = g_pipelines.size();
++    }
++    if (window > 0 || pending > 0) {
++      Log.info("PIPELINES skipped_draws/60f {} pending {} ready {} cache {}", window, pending, ready,
++               g_pipelineCacheBroken ? "broken" : "ok");
++    }
++  } else {
++    g_pipelineDrawMissWindow += misses;
++  }
+ }
+ 
+ void end_pipeline_frame() {
+@@ -1245,6 +1330,7 @@
+   std::lock_guard guard{g_pipelineMutex};
+   const auto it = g_pipelines.find(ref);
+   if (it == g_pipelines.end()) {
++    g_pipelineDrawMisses.fetch_add(1, std::memory_order_relaxed);
+     return false;
+   }
+   pipeline = it->second.pipeline;
+diff --git a/lib/webgpu/gpu_cache.cpp b/lib/webgpu/gpu_cache.cpp
+--- a/lib/webgpu/gpu_cache.cpp
++++ b/lib/webgpu/gpu_cache.cpp
+@@ -1,3 +1,4 @@
++#include <cstdio>
+ #include <cstring>
+ #include <cstdint>
+ #include <mutex>
+@@ -204,6 +205,33 @@
+   return true;
+ }
+ 
++// The dawn cache is derived data: everything in it can be recompiled. Until
++// now a single torn write disabled it permanently, because every later launch
++// failed the same PRAGMA and set cache_broken -- so every pipeline was compiled
++// from scratch on first use, forever. Move the unreadable file aside once and
++// start a fresh database instead. The bad copy is kept for diagnosis, not
++// silently deleted.
++static bool quarantine_cache_file() {
++  const auto path = io::fs_path_to_string(cache_path());
++  const auto bad = path + ".corrupt";
++  const auto journal = path + "-journal";
++
++  std::remove(bad.c_str());
++  if (std::rename(path.c_str(), bad.c_str()) != 0) {
++    if (std::remove(path.c_str()) != 0) {
++      Log.error("Failed to quarantine unreadable dawn cache at '{}'", path);
++      return false;
++    }
++    Log.warn("Deleted unreadable dawn cache '{}' (could not rename it aside)", path);
++  } else {
++    Log.warn("Quarantined unreadable dawn cache to '{}'; rebuilding", bad);
++  }
++  // The rollback journal describes the file that just moved; it must not be
++  // replayed into the replacement.
++  std::remove(journal.c_str());
++  return true;
++}
++
+ static bool cache_init() {
+   if (cache_broken) {
+     return false;
+@@ -213,14 +241,23 @@
+     return true;
+   }
+ 
+-  if (!cache_init_core()) {
+-    Log.error("SQLite DB init failed");
++  if (cache_init_core()) {
++    Log.debug("SQLite cache init succeeded");
++    return true;
++  }
++
++  Log.error("SQLite DB init failed");
++  // Drop the handle before touching the file, then try exactly once more on a
++  // clean database. A second failure is not a corrupt file -- it is the cache
++  // path itself -- so stop rather than churn the SD card every call.
++  sqlite3_close(db);
++  db = nullptr;
++  if (!quarantine_cache_file() || !cache_init_core()) {
+     init_abort();
+     return false;
+   }
+ 
+-  Log.debug("SQLite cache init succeeded");
+-
++  Log.info("SQLite cache init succeeded after rebuild");
+   return true;
+ }
+ 
