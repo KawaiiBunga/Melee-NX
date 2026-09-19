@@ -35,3 +35,6 @@ Output: `build/switch/melee.nro`
 Port code (`switch/`, `builder/`) is GPL-3.0-or-later, matching melee-pc.
 Game source in `ref/melee-pc/src/melee` and `ref/melee-pc/src/sysdolphin` is not
 licensed and remains the property of Nintendo. No game assets are distributed here.
+
+## Like what I do?
+I love what I do and want to keep sharing it with the world. You can directly support me and my projects here: https://ko-fi.com/kawaiibunga
