@@ -1,5 +1,5 @@
 ﻿diff --git a/extern/aurora/lib/aurora.cpp b/extern/aurora/lib/aurora.cpp
-index 0e1819e..04b4772 100644
+index 0e1819e..0412ed6 100644
 --- a/extern/aurora/lib/aurora.cpp
 +++ b/extern/aurora/lib/aurora.cpp
 @@ -357,26 +357,11 @@ void end_frame() noexcept {
@@ -34,6 +34,26 @@ index 0e1819e..04b4772 100644
          pass.End();
        }
      } else {
+@@ -392,14 +377,17 @@ void end_frame() noexcept {
+     webgpu::gpu_prof::after_submit();
+     if (canPresent && g_surface) {
+       ZoneScopedN("Present");
+-      wgpu::ConvertibleStatus status = wgpu::Status::Error;
++      /* Our pinned Dawn revision (chosen for proven Switch/NVK compatibility --
++       * see docs/DEPS.md) predates wgpu::ConvertibleStatus; wgpu::Status is a
++       * plain Success/Error enum there, so compare it explicitly instead. */
++      wgpu::Status status = wgpu::Status::Error;
+       {
+         window::SurfaceLock surfaceLock;
+         if (window::is_presentable()) {
+           status = g_surface.Present();
+         }
+       }
+-      if (status) {
++      if (status == wgpu::Status::Success) {
+         gfx::after_present();
+         /* Only on the transition into suboptimal: refresh_surface() calls
+          * gpu_synchronize(), so asking every frame would stall the pipeline
 diff --git a/extern/aurora/lib/gx/pipeline.cpp b/extern/aurora/lib/gx/pipeline.cpp
 index 6b2acfe..19d1f3c 100644
 --- a/extern/aurora/lib/gx/pipeline.cpp
