@@ -40,6 +40,7 @@
 scratch_*
 /scratchpad/
 /Logs/
+/scratch/
 
 # ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
@@ -61,3 +62,4 @@ desktop.ini
 /AGENTS.md
 /CLAUDE.md
 /PROGRESS.md
+docs/
