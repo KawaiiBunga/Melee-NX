@@ -3,7 +3,7 @@
 Nintendo Switch homebrew port of [melee-pc](https://github.com/999sian/melee-pc)
 (Super Smash Bros. Melee NTSC-U 1.02).
 
-**Status: In development. Not yet functional.**
+**Status: In development. Expect performance issues and bugs**
 
 ## Requirements
 
