@@ -16,6 +16,8 @@ Nintendo Switch homebrew port of [melee-pc](https://github.com/999sian/melee-pc)
 See [docs/DEPS.md](docs/DEPS.md) for dependency acquisition and
 [docs/PORTING-NOTES.md](docs/PORTING-NOTES.md) for architecture notes.
 
+**There are some things building this requires right now that I have not yet made publicly available. As I progress this project, I will isolate the specific deps this needs and ship them alongside the rest of the repo.**
+
 Requires the `kartpad-dawn` Docker image (devkitA64 GCC + LLVM Clang 19 + Mesa NVK):
 
 ```bash
