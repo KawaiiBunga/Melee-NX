@@ -55,11 +55,14 @@ desktop.ini
 .vscode/
 .idea/
 
-# ── Claude / AI memory (never publish) ───────────────────────────────────────
+# ── Internal / AI notes (never publish) ──────────────────────────────────────
+# docs/ holds design notes and handoffs kept local; the public docs are the
+# root README.md, BUILDING.md, docs/DEPS.md, and switch/patches/README.md, which
+# stay tracked despite the /docs/ rule because git honors explicit tracking.
 /memory/
 /docs/
 .claude/
 /AGENTS.md
 /CLAUDE.md
 /PROGRESS.md
-docs/
+/PERFORMANCE.md
