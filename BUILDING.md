@@ -210,12 +210,11 @@ Work in progress, but playable and improving.
 - Match/stage loads can still hitch for a second or two while streaming assets.
 
 `PERF` lines in `melee-nx-runtime.log` report per-second frame timing split into
-`sim` (game logic), `submit` and `wait`. `PIPELINES` lines report how many draws
-were skipped for a not-yet-compiled pipeline.
-
-The optional affinity sweep, individual-frame histogram and detailed stage
-timers are documented in [PERFORMANCE.md](PERFORMANCE.md). Affinity experiments
-are off by default; select them through `perf.cfg` for matched hardware tests.
+`sim` (game logic), `submit` and `wait`; `STAGES` lines break the frame down
+further (`fifo`, `texture`, `alarms`, …). `PIPELINES` lines report how many draws
+were skipped for a not-yet-compiled pipeline. Optional thread-affinity
+experiments are off by default and selected through a `perf.cfg` next to the NRO
+(`affinity main|split|baseline`) for matched hardware comparisons.
 
 ---
 
@@ -256,9 +255,8 @@ switch/
   src/                 NRO entry point, libnx integration, SQLite VFS, disc gate
 ref/                   upstream sources — gitignored, never committed
 build/                 build trees and output — gitignored
-docs/                  design notes and working handoffs (not end-user docs)
 ```
 
-Architecture and porting decisions are in
-[docs/PORTING-NOTES.md](docs/PORTING-NOTES.md). Exact dependency revisions and
-the deployment workflow are in [docs/DEPS.md](docs/DEPS.md).
+Exact dependency revisions and the deployment workflow are in
+[docs/DEPS.md](docs/DEPS.md). Per-patch rationale is in
+[switch/patches/README.md](switch/patches/README.md).

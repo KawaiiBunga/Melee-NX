@@ -1,15 +1,9 @@
 # Dependency acquisition
 
-> Current patch and hardware state: [HANDOFF-PERF-SWEEP.md](HANDOFF-PERF-SWEEP.md).
-> The historical patch overlap described later is resolved. Use graphics
-> preparation followed by `builder/docker.sh melee all`; it applies game patches
-> before configuring. The old deployment hashes below are historical.
-
-> **For the end-user build guide, see [../BUILDING.md](../BUILDING.md).** That
-> file is the tracked, user-facing document; this one records exact revisions,
-> provenance and the dev-machine shortcuts. `builder/fetch-deps.sh` automates
-> everything below except Mesa/NVK.
-
+> **For the build guide, see [../BUILDING.md](../BUILDING.md).** This file records
+> the exact revisions and provenance behind `builder/fetch-deps.sh`, which
+> automates everything below except Mesa/NVK. Prepare the graphics trees, then
+> run `builder/docker.sh melee all` (it applies game patches before configuring).
 
 All reference trees go under `ref/`. They are gitignored — never commit them.
 
@@ -89,8 +83,8 @@ No new Docker image needed for this part.
 Switch has no vendor Vulkan driver for homebrew to link against, and devkitPro's
 own `switch-mesa` package is EGL/GLES-only (confirmed in-container: it installs
 `libEGL.a`/`libGLESv1_CM.a`/`libGLESv2.a`/`libglapi.a`, no `libvulkan.a`). The
-render path this project uses (`docs/PORTING-NOTES.md`'s Aurora GX → Dawn →
-**Vulkan** → NVK chain) needs Mesa's NVK driver specifically — a from-scratch
+render path this project uses (Aurora GX → Dawn → **Vulkan** → NVK) needs Mesa's
+NVK driver specifically — a from-scratch
 Vulkan driver for the Tegra X1 that Nintendo Switch homebrew uses, part of it
 (NAK, its shader-compiler backend) written in Rust. Rust has no
 `aarch64-none-elf`/Horizon target (the same gap `nod` hit — see
@@ -126,11 +120,9 @@ KartPad-NX checked out needs its own Mesa/NVK build via
 `switch/overlays/mesa-switch/build-switch.sh`-equivalent (or a copy of that
 tree), not a hard requirement on KartPad-NX's existence in general.
 
-## Current build and deployment workflow
+## Build and deployment workflow
 
-The local `ref/melee-pc` snapshot contains layered historical edits that
-overlap the old monolithic compatibility patch. For this snapshot, do not force
-`build-melee.sh all` through a failed reverse check. The verified sequence is:
+The staged sequence (the `docker.sh` wrapper runs these inside the container):
 
 ```bash
 bash builder/build-graphics.sh prepare
@@ -175,11 +167,8 @@ curl --fail --output /tmp/melee.deployed.nro \
 sha256sum build/switch/melee.nro /tmp/melee.deployed.nro
 ```
 
-The 2026-09-19 afternoon deployed build is 85,896,341 bytes with SHA-256
-`84d88dd602959e1abef4c6d35220b7838a1ed977cfb44b7c0a289d9afc3b1342`
-(SDL variant `dusklight`). The morning build it replaced was 85,879,957 bytes,
-`184480f708c5f26fd22bc115ca5319b42c9e922e67d2ec07948bdf5b7742ece5`, kept at
-`scratch/perf-2026-09-19b/pre/melee.nro`.
+The `sha256sum` of the local and downloaded NRO must match before attributing any
+hardware result to a build — the round-trip check is not optional.
 
 Never edit a `builder/*.sh` script while a container is running it: bash reads
 the file by byte offset as it goes, so rewriting it derails the rest of the run

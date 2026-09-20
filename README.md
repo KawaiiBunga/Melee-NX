@@ -27,9 +27,6 @@ clocks. A locked 60 is the remaining goal.
 | Rendering | can briefly drop geometry while a shader pipeline is still compiling |
 | Load transitions | occasional multi-second hitch while streaming assets |
 
-Performance investigation notes live in `docs/`. They are working documents for
-contributors, not user documentation.
-
 ---
 
 ## Installing a build
@@ -69,9 +66,6 @@ bash builder/docker.sh melee all        # apply game patches, configure, build
 
 Output: `build/switch/melee.nro`.
 
-For repeatable hardware comparisons and optional affinity experiments, see
-[PERFORMANCE.md](PERFORMANCE.md).
-
 Everything compiles inside a Docker container defined in
 `switch/docker/Dockerfile`, so Docker and git are the only host requirements.
 
@@ -90,13 +84,11 @@ builder/       fetch-deps, docker wrapper, and the two build stages
 switch/        the port itself: NRO entry point, CMake, toolchain, patches
 switch/patches every change made to the upstream reference trees
 ref/           upstream sources (melee-pc, Dawn, SDL) — gitignored
-docs/          design notes and contributor handoffs
 ```
 
-`switch/patches/README.md` documents what every patch does and why.
-[docs/PORTING-NOTES.md](docs/PORTING-NOTES.md) is the blow-by-blow of the
-porting decisions — big-endian scalar storage order, the MEM1 4 GB pointer
-window, PIE/PIC linking, process teardown, and the SQLite cache work.
+[switch/patches/README.md](switch/patches/README.md) documents what every patch
+does and why — big-endian storage order, the MEM1 4 GB pointer window, PIE/PIC
+linking, process teardown, and the SQLite cache work.
 
 ---
 
@@ -115,13 +107,11 @@ window, PIE/PIC linking, process teardown, and the SQLite cache work.
 
 ## License
 
-Port code (`switch/`, `builder/`) is GPL-3.0-or-later, matching melee-pc.
-Game source in `ref/melee-pc/src/melee` and `ref/melee-pc/src/sysdolphin` is not
-licensed and remains the property of Nintendo. No game assets are distributed here.
+Port code (`switch/`, `builder/`) is GPL-3.0-or-later, matching melee-pc. Game
+source under `ref/melee-pc/src/melee` and `ref/melee-pc/src/sysdolphin` is not
+licensed and remains the property of Nintendo. No game assets are distributed by
+this repository, and none should ever be committed to it.
 
-## Like what I do?
-I love what I do and want to keep sharing it with the world. You can directly support me and my projects here: https://ko-fi.com/kawaiibunga
+## Support
 
-Game source under `ref/melee-pc/src/melee` and `ref/melee-pc/src/sysdolphin` is
-not licensed and remains the property of Nintendo. No game assets are
-distributed by this repository, and none should ever be committed to it.
+If you'd like to support this and my other projects: https://ko-fi.com/kawaiibunga

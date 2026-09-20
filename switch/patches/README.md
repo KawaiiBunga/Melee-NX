@@ -20,6 +20,7 @@ Patches applied idempotently by `builder/build-graphics.sh` and `builder/build-m
 | `aurora-switch-encoder-state-cache.patch` | `ref/melee-pc/extern/aurora` | Dusklight-derived render-pass-scoped suppression of redundant texture bind-group and destination-alpha blend-constant calls |
 | `aurora-switch-cache-recovery.patch` | `ref/melee-pc/extern/aurora` | Descriptor-cache recovery and I/O lock, compiler pin/priority/pacing, skipped-draw telemetry |
 | `aurora-switch-blob-cache-batch.patch` | `ref/melee-pc/extern/aurora` | Dawn cache recovery, batched writes, flush API declarations |
+| `aurora-switch-texture-telemetry.patch` | `ref/melee-pc/extern/aurora` | Per-frame texture cache stats (`TEXSTATS`) and stage timing in `gx::end_frame` |
 | `aurora-switch-perf-imgui.patch` | `ref/melee-pc/extern/aurora` | ImGui pass reuse, Dawn status compatibility, flush API implementation and end-frame stage timers |
 | `aurora-switch-thread-sweep.patch` | `ref/melee-pc/extern/aurora` | Connects named thread setup to the optional Switch affinity sweep |
 | `melee-switch-gcc-compat.patch` | `ref/melee-pc` | Launcher/resource/file-cache compatibility, recovered audio changes and negotiated-device telemetry |
@@ -35,7 +36,7 @@ different point than KartPad-NX's aurora checkout (different namespace style, a
 simpler `create_window()`, and Dawn API shapes that had already moved past what
 KartPad's patches were written against), so KartPad's originals did not apply and in
 two cases (`aurora-switch-dawn-api.patch`, `aurora-switch-window.patch`'s window.cpp
-hunks) turned out to be unnecessary here — see `docs/PORTING-NOTES.md` §2 for why.
+hunks) turned out to be unnecessary here.
 
 ## SDL patch stack
 
@@ -66,4 +67,3 @@ Run `python builder/verify-patches.py` after editing reference sources. It
 reconstructs patched files from pinned Git objects in a disposable directory,
 checks application and reversal, rejects overlapping ownership, and compares
 the result with the live sources. Do not reset or clean the reference trees.
-Performance experiments are described in [PERFORMANCE.md](../../PERFORMANCE.md).
