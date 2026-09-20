@@ -102,6 +102,7 @@ prepare() {
   # File-disjoint patches include the recovered build's complete source delta.
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-cache-recovery.patch"
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-blob-cache-batch.patch"
+  apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-texture-telemetry.patch"
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-platform-compat.patch"
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-perf-imgui.patch"
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-thread-sweep.patch"

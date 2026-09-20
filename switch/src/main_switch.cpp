@@ -346,7 +346,15 @@ void set_file_cache_budget() {
         return;  // Leave melee-pc's own fallback in place rather than guess worse.
     }
     const u64 totalMb = totalBytes / (1024 * 1024);
-    const unsigned budgetMb = totalMb <= 2048 ? 24u : (totalMb <= 4096 ? 64u : 512u);
+    // Title takeover (~3.2 GB) gets 256 MB, up from 64. At 64 MB the ~28 MB of
+    // pinned system/UI archives left only ~36 MB for gameplay, so a match's
+    // character/stage archives evicted one another and were re-read from SD on
+    // the game thread every time they were touched -- the repeated multi-second
+    // sim-frame hitches in the perf log. 256 MB holds a match's whole working
+    // set alongside the pinned essentials, so each archive is read once. Stays
+    // well under the process allowance (the "used" figure the boot log prints is
+    // reserved address space, not committed pages). Halve if it fails to boot.
+    const unsigned budgetMb = totalMb <= 2048 ? 24u : (totalMb <= 4096 ? 256u : 512u);
 
     char value[16];
     std::snprintf(value, sizeof(value), "%u", budgetMb);

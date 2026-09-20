@@ -16,11 +16,10 @@ diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
  #include <deque>
  #include <filesystem>
  #include <limits>
-@@ -26,6 +30,39 @@
- #include <absl/container/flat_hash_set.h>
+@@ -27,6 +31,46 @@
  #include <fmt/format.h>
  #include <tracy/Tracy.hpp>
-+
+ 
 +#include "../thread.hpp"
 +
 +#if defined(__SWITCH__)
@@ -40,23 +39,31 @@ diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
 +// core from the game or FIFO thread mid-frame -- the telemetry's sim spikes
 +// track compile bursts one-for-one. Pinning breaks that coupling: the compiler
 +// gets the top core and the game/FIFO/render threads keep the rest.
-+void pin_compiler_to_spare_core() {
++//
++// Returns true if the compiler now owns a core of its own. That fact matters to
++// the pre-warm pacing: once the compiler is confined to a spare core it can no
++// longer steal cycles from the game/FIFO threads, so throttling the background
++// seed on frame time (see BackgroundFrameBudgetNs) stops protecting anything and
++// only leaves ~6,500 pipelines forever uncompiled -- every new scene then skips
++// the draws whose pipeline never got built. Pinned, we drain the seed flat out.
++bool pin_compiler_to_spare_core() {
 +  uint64_t mask = 0;
 +  if (svcGetInfo(&mask, kInfoCoreMask, kCurProcessHandle, 0) != 0 || mask == 0) {
-+    return;
++    return false;
 +  }
 +  int top = 31;
 +  while (top > 0 && ((mask >> top) & 1u) == 0) {
 +    --top;
 +  }
-+  svcSetThreadCoreMask(kCurThreadHandle, top, 1u << top);
++  return svcSetThreadCoreMask(kCurThreadHandle, top, 1u << top) == 0;
 +}
 +} // namespace
 +#endif
- 
++
  namespace aurora::gfx {
  static Module Log("aurora::gfx::pipeline_cache");
-@@ -61,6 +98,24 @@
+ 
+@@ -61,6 +105,49 @@ struct SdlVfsSqliteFile {
  static std::mutex g_pipelineMutex;
  static bool g_hasPipelineThread = false;
  static size_t g_pipelinesPerFrame = 0;
@@ -78,10 +85,35 @@ diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
 +// pre-warm stops granting itself credit until they recover. 20ms leaves room
 +// for the odd long frame without pausing on every jitter.
 +constexpr int64_t BackgroundFrameBudgetNs = 20'000'000;
++// Set once the compiler thread has confined itself to a spare core (Switch). It
++// no longer contends for a core with the game/FIFO threads, so the frame-time
++// backoff above is pointless -- it just starves the seed and leaves every fresh
++// scene with skipped draws. When pinned we grant credit every frame regardless
++// of frame time so the seed keeps draining while the game runs.
++//
++// But "own core" is not "free": a cold vkCreateGraphicsPipeline on NVK is ~100ms
++// of allocation- and memory-bandwidth-heavy work, and the Tegra X1's three cores
++// share one memory system, so a compiler running flat out starves the game
++// thread's sim and audio-alarm work even from a separate core (measured: alarms
++// 9ms -> 50-227ms, multi-second sim frames). The real throttle is therefore a
++// duty-cycle cap applied *after* each background compile (see pipeline_worker):
++// the worker yields the memory bus for BackgroundThrottleNumer/Denom of the time
++// it just spent compiling, so background pre-warm runs at a bounded fraction of
++// the machine while on-demand compiles (a draw is waiting) are never throttled.
++static std::atomic_bool g_compilerCorePinned{false};
++constexpr size_t PinnedBackgroundCreditsPerFrame = 1;
++constexpr size_t PinnedBackgroundCreditCap = 4;
++// Sleep this multiple of the last compile's duration after a background compile.
++// 3/1 => the worker is busy ~1/4 of the time, idle ~3/4, capping its share of
++// the shared memory system. Interruptible: an on-demand request wakes it early.
++// Conservative starting point favoring a playable frame rate; raise the duty
++// (lower the ratio) if the seed warms too slowly and skipped draws reappear.
++constexpr int64_t BackgroundThrottleNumer = 3;
++constexpr int64_t BackgroundThrottleDenom = 1;
  // For synchronous pipeline fallback (OpenGL)
  #ifdef NDEBUG
  constexpr size_t BuildPipelinesPerFrame = 5;
-@@ -574,6 +629,16 @@
+@@ -574,6 +661,16 @@ static void pipeline_cache_abort() {
  static bool write_pipeline_cache_record(const PipelineCacheWrite& write);
  
  static std::string pipeline_cache_seed_path() {
@@ -98,7 +130,7 @@ diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
    if (g_config.resourcesPath == nullptr || g_config.resourcesPath[0] == '\0') {
      return InitialPipelineCacheName;
    }
-@@ -625,11 +690,13 @@
+@@ -625,11 +722,13 @@ static void seed_pipeline_cache() {
      return;
    }
  
@@ -117,7 +149,7 @@ diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
      return;
    }
  
-@@ -727,7 +794,7 @@
+@@ -727,7 +826,7 @@ static void seed_pipeline_cache() {
    }
  }
  
@@ -126,7 +158,7 @@ diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
    if (g_pipelineCacheBroken) {
      return false;
    }
-@@ -743,7 +810,11 @@
+@@ -743,7 +842,11 @@ static bool prepare_pipeline_cache_db() {
      return false;
    }
  
@@ -138,7 +170,7 @@ diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
    if (ret != SQLITE_OK) {
      Log.error("Failed to set pipeline cache pragmas: {}", sqlite3_errmsg(g_pipelineCacheDb));
      pipeline_cache_abort();
-@@ -844,6 +915,59 @@
+@@ -844,6 +947,59 @@ INSERT INTO aurora_schema VALUES ({});)",
    return true;
  }
  
@@ -198,7 +230,7 @@ diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
  static void prune_old_pipeline_cache_versions() {
    if (!prepare_pipeline_cache_db()) {
      return;
-@@ -946,6 +1070,10 @@
+@@ -946,6 +1102,10 @@ static void pipeline_cache_writer() {
  
      bool writeFailed = false;
      {
@@ -209,7 +241,7 @@ diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
        sqlite::Transaction tx(g_pipelineCacheDb, Log, true);
        if (!tx) {
          Log.error("Failed to begin pipeline cache write transaction");
-@@ -962,10 +1090,13 @@
+@@ -962,10 +1122,13 @@ static void pipeline_cache_writer() {
            tx.commit();
          }
        }
@@ -224,7 +256,7 @@ diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
        return;
      }
    }
-@@ -975,6 +1106,25 @@
+@@ -975,10 +1138,30 @@ static void pipeline_worker() {
  #ifdef TRACY_ENABLE
    tracy::SetThreadName("Pipeline compilation thread");
  #endif
@@ -244,13 +276,18 @@ diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
 +    // the next frames instead of tanking the current one.
 +    thread::set_current({.name = "PipelineCompiler", .priority = thread::Priority::Low});
 +#if defined(__SWITCH__)
-+    pin_compiler_to_spare_core();
++    g_compilerCorePinned.store(pin_compiler_to_spare_core(), std::memory_order_relaxed);
 +#endif
 +  }
  
    bool hasMore = false;
    while (g_hasPipelineThread || g_pipelinesPerFrame < BuildPipelinesPerFrame) {
-@@ -1000,6 +1150,22 @@
+     PendingPipeline pending;
++    bool fromBackground = false;
+     {
+       std::unique_lock lock{g_pipelineMutex};
+       if (g_hasPipelineThread) {
+@@ -1000,11 +1183,31 @@ static void pipeline_worker() {
        if (g_pipelineThreadEnd) {
          break;
        }
@@ -271,9 +308,40 @@ diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
 +        g_backgroundCredits.fetch_sub(1, std::memory_order_relaxed);
 +      }
        auto& source = (!g_hasPipelineThread || !g_pipelineQueue.empty()) ? g_pipelineQueue : g_backgroundPipelineQueue;
++      fromBackground = &source == &g_backgroundPipelineQueue;
        pending = std::move(source.front());
        source.pop_front();
-@@ -1070,6 +1236,12 @@
+     }
++    const auto compileStart = std::chrono::steady_clock::now();
+     auto result = pending.create();
++    const int64_t compileNs =
++        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - compileStart).count();
+     {
+       std::lock_guard lock{g_pipelineMutex};
+       g_pipelines.try_emplace(pending.hash, CachedPipeline{
+@@ -1018,6 +1221,21 @@ static void pipeline_worker() {
+       ++g_pipelinesPerFrame;
+     }
+     notify_pipeline_ready(true);
++
++    // Duty-cycle throttle for background pre-warm only (see the note by
++    // BackgroundThrottleNumer). Yield the shared memory bus for a multiple of the
++    // time the compile just took, so the game thread is not starved. Wait on the
++    // queue CV rather than a bare sleep so a draw that actually needs a pipeline
++    // (g_pipelineQueue) preempts the throttle immediately.
++    if (fromBackground && compileNs > 0 && g_compilerCorePinned.load(std::memory_order_relaxed) &&
++        !g_pipelineThreadEnd) {
++      const int64_t sleepNs = compileNs * BackgroundThrottleNumer / BackgroundThrottleDenom;
++      if (sleepNs > 0) {
++        std::unique_lock lock{g_pipelineMutex};
++        g_pipelineQueueCv.wait_for(lock, std::chrono::nanoseconds(sleepNs),
++                                   [] { return !g_pipelineQueue.empty() || g_pipelineThreadEnd; });
++      }
++    }
+   }
+ }
+ 
+@@ -1070,6 +1288,12 @@ static size_t load_pipeline_cache_entries(ShaderType type, uint32_t configVersio
  }
  
  static size_t load_pipeline_cache() {
@@ -286,7 +354,7 @@ diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
    if (!prepare_pipeline_cache_db()) {
      return 0;
    }
-@@ -1128,7 +1300,11 @@
+@@ -1128,7 +1352,11 @@ PipelineRef find_pipeline(ShaderType type, const clear::PipelineConfig& config,
   * per variant per install, not per visit. */
  template <>
  PipelineRef find_pipeline(ShaderType type, const gx::PipelineConfig& config, NewPipelineCallback&& cb) {
@@ -298,7 +366,7 @@ diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
  }
  
  #ifdef AURORA_ENABLE_RMLUI
-@@ -1179,7 +1355,10 @@
+@@ -1179,7 +1407,10 @@ void shutdown_pipeline_cache() {
    g_hasPipelineThread = false;
  
    stop_pipeline_cache_writer();
@@ -310,7 +378,7 @@ diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
    g_pipelineCacheBroken = false;
    g_pipelinesPerFrame = 0;
    g_gpuCachePrunePending = false;
-@@ -1196,6 +1375,60 @@
+@@ -1196,6 +1427,67 @@ void begin_pipeline_frame() {
    if (!g_hasPipelineThread) {
      g_pipelinesPerFrame = 0;
    }
@@ -320,14 +388,21 @@ diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
 +  const auto frameDelta = std::chrono::duration_cast<std::chrono::nanoseconds>(frameNow - framePrev).count();
 +  framePrev = frameNow;
 +
-+  // Grant the background pre-warm a slice only while frames are healthy. A
-+  // struggling frame rate is the one situation where speculatively compiling
-+  // pipelines nobody has asked for is certainly the wrong thing to spend the
-+  // machine on, and this makes the worker back off on its own instead of
-+  // needing a mode flag threaded through from the game.
-+  if (frameDelta > 0 && frameDelta <= BackgroundFrameBudgetNs) {
-+    if (g_backgroundCredits.load(std::memory_order_relaxed) < BackgroundCreditCap) {
-+      g_backgroundCredits.fetch_add(BackgroundCreditsPerFrame, std::memory_order_relaxed);
++  // Grant the background pre-warm a slice of credit. When the compiler shares
++  // cores with the game (no spare-core pin), do it only while frames are healthy
++  // -- a struggling frame rate is the one situation where speculatively compiling
++  // pipelines nobody has asked for is the wrong thing to spend the machine on,
++  // and this makes the worker back off on its own without a mode flag threaded
++  // through from the game. Once the compiler owns a spare core, though, it steals
++  // nothing by running, and throttling it just leaves the seed forever
++  // half-compiled; grant it a fat slice every frame so it drains flat out.
++  const bool pinned = g_compilerCorePinned.load(std::memory_order_relaxed);
++  const size_t creditCap = pinned ? PinnedBackgroundCreditCap : BackgroundCreditCap;
++  const size_t creditsPerFrame = pinned ? PinnedBackgroundCreditsPerFrame : BackgroundCreditsPerFrame;
++  const bool grant = pinned || (frameDelta > 0 && frameDelta <= BackgroundFrameBudgetNs);
++  if (grant) {
++    if (g_backgroundCredits.load(std::memory_order_relaxed) < creditCap) {
++      g_backgroundCredits.fetch_add(creditsPerFrame, std::memory_order_relaxed);
 +      g_pipelineQueueCv.notify_one();
 +    }
 +  }
@@ -371,7 +446,7 @@ diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
  }
  
  void end_pipeline_frame() {
-@@ -1208,6 +1441,7 @@
+@@ -1208,6 +1500,7 @@ bool get_pipeline(PipelineRef ref, wgpu::RenderPipeline& pipeline) {
    std::lock_guard guard{g_pipelineMutex};
    const auto it = g_pipelines.find(ref);
    if (it == g_pipelines.end()) {

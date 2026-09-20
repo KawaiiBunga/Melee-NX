@@ -1,0 +1,64 @@
+diff --git a/lib/gx/texture.cpp b/lib/gx/texture.cpp
+--- a/lib/gx/texture.cpp
++++ b/lib/gx/texture.cpp
+@@ -13,6 +13,7 @@
+ 
+ #include <algorithm>
+ #include <atomic>
++#include <chrono>
+ #include <cstddef>
+ #include <cstdint>
+ #include <cstring>
+@@ -699,7 +700,29 @@ gfx::TextureHandle resolve_static_palette_texture(const GXTexObj_& obj, const GX
+ }
+ 
+ void end_frame() noexcept {
++  // TEXSTATS diagnostics. texture_ms in the STAGES line is this whole function;
++  // it is bookkeeping (streaming + cache sweep), NOT the GX->RGBA conversion,
++  // which happens during fifo::drain (fifo_ms) when resolve_static_texture runs.
++  // These counters settle the "are textures reconverted every frame" question:
++  // `converts` is real content-cache misses (an actual convert+upload) over the
++  // window, `obj`/`content` are cache hits, and the split us timings say whether
++  // the per-frame cost is process_streaming() or sweep_object_caches().
++  using perf_clock = std::chrono::steady_clock;
++  static uint64_t s_texConverts = 0, s_texObjHits = 0, s_texContentHits = 0;
++  static uint64_t s_texReplHits = 0, s_texUploadBytes = 0, s_texHashedBytes = 0;
++  static uint64_t s_texStreamNs = 0, s_texSweepNs = 0, s_texWindowFrames = 0;
++  static auto s_texStatPrev = perf_clock::now();
++  s_texConverts += s_stats.misses;
++  s_texObjHits += s_stats.objectHits;
++  s_texContentHits += s_stats.contentHits;
++  s_texReplHits += s_stats.replacementHits;
++  s_texUploadBytes += s_stats.uploadBytes;
++  s_texHashedBytes += s_stats.hashedBytes;
++  ++s_texWindowFrames;
++
++  const auto streamT0 = perf_clock::now();
+   const auto streamingStats = gfx::texture_replacement::process_streaming();
++  s_texStreamNs += std::chrono::duration_cast<std::chrono::nanoseconds>(perf_clock::now() - streamT0).count();
+   s_stats.pendingLoads = streamingStats.pendingLoads;
+   s_stats.publishes = streamingStats.publishes;
+   s_stats.publishBytes = streamingStats.publishBytes;
+@@ -721,7 +744,22 @@ void end_frame() noexcept {
+   s_stats.publishBytes = streamingStats.publishBytes;
+   ++s_frameCount;
+   apply_pending_invalidations();
++  const auto sweepT0 = perf_clock::now();
+   sweep_object_caches();
++  s_texSweepNs += std::chrono::duration_cast<std::chrono::nanoseconds>(perf_clock::now() - sweepT0).count();
++
++  const auto statNow = perf_clock::now();
++  if (statNow - s_texStatPrev >= std::chrono::seconds(2)) {
++    const auto statMs = std::chrono::duration_cast<std::chrono::milliseconds>(statNow - s_texStatPrev).count();
++    Log.info("TEXSTATS converts {} obj_hits {} content_hits {} repl_hits {} upload_kb {} hashed_kb {} "
++             "stream_ms {:.1f} sweep_ms {:.1f} content_entries {} pending_loads {} over {} frames/{}ms",
++             s_texConverts, s_texObjHits, s_texContentHits, s_texReplHits, s_texUploadBytes / 1024,
++             s_texHashedBytes / 1024, s_texStreamNs / 1e6, s_texSweepNs / 1e6, s_contentCache.size(),
++             s_stats.pendingLoads, s_texWindowFrames, statMs);
++    s_texConverts = s_texObjHits = s_texContentHits = s_texReplHits = 0;
++    s_texUploadBytes = s_texHashedBytes = s_texStreamNs = s_texSweepNs = s_texWindowFrames = 0;
++    s_texStatPrev = statNow;
++  }
+ }
+ 
+ void shutdown() noexcept {
