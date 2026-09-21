@@ -12,6 +12,7 @@ enum class Affinity { Baseline, Main, Split };
 Affinity affinity = Affinity::Baseline;
 const char* affinity_name = "baseline";
 int compile_workers = 1;
+int monolithic_cache = 0;
 constexpr uint64_t BinNs = 250000; // Report percentile upper bounds, 0.25 ms bins.
 constexpr size_t BinCount = 4000;  // >=1000 ms is reported as overflow.
 std::array<uint32_t, BinCount> bins{};
@@ -55,15 +56,18 @@ extern "C" void melee_nx_perf_init(void) {
                 }
             } else if (std::strcmp(key, "compile_workers") == 0) {
                 compile_workers = (std::strcmp(value, "2") == 0) ? 2 : 1;
+            } else if (std::strcmp(key, "monolithic_cache") == 0) {
+                monolithic_cache = (std::strcmp(value, "1") == 0) ? 1 : 0;
             }
         }
         std::fclose(file);
     }
-    // Bridge the compile-worker count to aurora's pipeline cache (it reads this
-    // env in initialize_pipeline_cache, which runs later in melee's main()).
+    // Bridge perf.cfg knobs to aurora, which reads these env vars when it creates
+    // the device / pipeline cache later in melee's main().
     setenv("AURORA_COMPILE_WORKERS", compile_workers == 2 ? "2" : "1", 1);
-    pc_log_line("SWEEP affinity %s compile_workers %d histogram_bin_ms 0.25 histogram_limit_ms 1000",
-                affinity_name, compile_workers);
+    setenv("AURORA_MONOLITHIC_PIPELINE_CACHE", monolithic_cache == 1 ? "1" : "0", 1);
+    pc_log_line("SWEEP affinity %s compile_workers %d monolithic_cache %d histogram_bin_ms 0.25 histogram_limit_ms 1000",
+                affinity_name, compile_workers, monolithic_cache);
 }
 
 extern "C" void melee_nx_perf_thread(const char* name) {
