@@ -2,6 +2,7 @@
 #include <switch.h>
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 extern "C" void pc_log_line(const char* fmt, ...);
@@ -10,6 +11,7 @@ namespace {
 enum class Affinity { Baseline, Main, Split };
 Affinity affinity = Affinity::Baseline;
 const char* affinity_name = "baseline";
+int compile_workers = 1;
 constexpr uint64_t BinNs = 250000; // Report percentile upper bounds, 0.25 ms bins.
 constexpr size_t BinCount = 4000;  // >=1000 ms is reported as overflow.
 std::array<uint32_t, BinCount> bins{};
@@ -38,23 +40,30 @@ extern "C" void melee_nx_perf_init(void) {
         char line[128];
         while (std::fgets(line, sizeof(line), file)) {
             char key[32], value[32], extra[2];
-            if (std::sscanf(line, " %31s %31s %1s", key, value, extra) != 2 ||
-                std::strcmp(key, "affinity") != 0)
+            if (std::sscanf(line, " %31s %31s %1s", key, value, extra) != 2)
                 continue;
-            if (std::strcmp(value, "main") == 0) {
-                affinity = Affinity::Main;
-                affinity_name = "main";
-            } else if (std::strcmp(value, "split") == 0) {
-                affinity = Affinity::Split;
-                affinity_name = "split";
-            } else if (std::strcmp(value, "baseline") == 0) {
-                affinity = Affinity::Baseline;
-                affinity_name = "baseline";
+            if (std::strcmp(key, "affinity") == 0) {
+                if (std::strcmp(value, "main") == 0) {
+                    affinity = Affinity::Main;
+                    affinity_name = "main";
+                } else if (std::strcmp(value, "split") == 0) {
+                    affinity = Affinity::Split;
+                    affinity_name = "split";
+                } else if (std::strcmp(value, "baseline") == 0) {
+                    affinity = Affinity::Baseline;
+                    affinity_name = "baseline";
+                }
+            } else if (std::strcmp(key, "compile_workers") == 0) {
+                compile_workers = (std::strcmp(value, "2") == 0) ? 2 : 1;
             }
         }
         std::fclose(file);
     }
-    pc_log_line("SWEEP affinity %s histogram_bin_ms 0.25 histogram_limit_ms 1000", affinity_name);
+    // Bridge the compile-worker count to aurora's pipeline cache (it reads this
+    // env in initialize_pipeline_cache, which runs later in melee's main()).
+    setenv("AURORA_COMPILE_WORKERS", compile_workers == 2 ? "2" : "1", 1);
+    pc_log_line("SWEEP affinity %s compile_workers %d histogram_bin_ms 0.25 histogram_limit_ms 1000",
+                affinity_name, compile_workers);
 }
 
 extern "C" void melee_nx_perf_thread(const char* name) {
