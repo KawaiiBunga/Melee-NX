@@ -1,15 +1,42 @@
 diff --git a/src/pc/main.c b/src/pc/main.c
 --- a/src/pc/main.c
 +++ b/src/pc/main.c
-@@ -69,6 +69,17 @@
+@@ -22,6 +22,9 @@
+ 
+ #include "pc/pc.h"
+ #include "pc/launcher.h"
++#if defined(__SWITCH__)
++#include "log_switch.h"
++#endif
+ 
+ int melee_main(void);
+ 
+@@ -54,12 +57,16 @@
+ /* Milliseconds since the first log record. Without a time base there is no
+  * way to line a frame stall up against what the engine was loading. */
+ static double log_now_ms(void) {
++#if defined(__SWITCH__)
++    return melee_nx_log_now_ms();
++#else
+     static Uint64 t0;
+     const Uint64 now = SDL_GetTicksNS();
+     if (t0 == 0) {
+         t0 = now;
+     }
+     return (double)(now - t0) / 1e6;
++#endif
+ }
+ 
+ void pc_log_line(const char* fmt, ...) {
+@@ -69,6 +76,17 @@
      vsnprintf(msg, sizeof(msg), fmt, ap);
      va_end(ap);
      const double t = log_now_ms();
 +#if defined(__SWITCH__)
-+    /* Route through the shared batched sink (os.c). fprintf+fflush per line on
++    /* Route through the shared buffered sink. fprintf+fflush per line on
 +     * an _IONBF stream is a synchronous SD write every call, which on the frame
 +     * boundary turned this very telemetry into 30-687ms hitches. Format once and
-+     * hand the bytes to pc_switch_log_write, whose fsync is batched. */
++     * hand the bytes to pc_switch_log_write, whose writer batches SD writes and fsync. */
 +    char line[540];
 +    int n = snprintf(line, sizeof(line), "[%9.3f] %s\n", t, msg);
 +    if (n > 0) {
@@ -19,7 +46,7 @@ diff --git a/src/pc/main.c b/src/pc/main.c
      fprintf(stderr, "[%9.3f] %s\n", t, msg);
      fflush(stderr);
      FILE* lf = log_file();
-@@ -76,11 +87,77 @@
+@@ -76,11 +94,33 @@
          fprintf(lf, "[%9.3f] %s\n", t, msg);
          fflush(lf);
      }
@@ -28,54 +55,10 @@ diff --git a/src/pc/main.c b/src/pc/main.c
 +}
 +
 +#if defined(__SWITCH__)
-+/* Every Switch log sink has to share ONE file offset.
-+ *
-+ * This sink used to own a private fopen("sdmc:/switch/melee-nx/melee-nx-runtime.log",
-+ * "a"), and so did os.c's switch_log_vwrite(), while main_switch.cpp's
-+ * redirect_stdio_to_sd() dup2()'d a third descriptor for the same path onto
-+ * fd 1/2. Three handles, three independent file offsets, all appending: they
-+ * overwrote each other, and the file ended up truncated to whatever the last
-+ * handle to write had reached. Hardware-confirmed 2026-09-17 -- a run that
-+ * demonstrably got into melee_main() (gmMain's file-cache prewarm was on the
-+ * main thread's stack, and aurora's gfx render/pipeline workers were running,
-+ * which only start once webgpu::initialize() has succeeded) left a 331-byte
-+ * log that stopped at aurora's sixth line. Everything after that was lost,
-+ * which is exactly the part worth reading.
-+ *
-+ * Write to fd 1 instead. redirect_stdio_to_sd() rebinds the RAW descriptor, so
-+ * fd 1 is process-wide: one offset shared by every sink on every thread, and
-+ * no per-_reent FILE* that could hit a stale devoptab from a Dawn worker (the
-+ * original reason this sink avoided stdout -- see main_switch.cpp for why the
-+ * fd-level redirect fixes that for good). write() also holds no newlib buffer,
-+ * so a line has reached the SD card before the next one is formatted. */
-+#include <pthread.h>
 +#include <unistd.h>
-+
-+static pthread_mutex_t s_switch_log_mutex = PTHREAD_MUTEX_INITIALIZER;
-+
-+/* Serialized so two threads' lines never interleave mid-line. */
 +static void switch_log_write(const char* buf, size_t len, bool flush_now) {
-+    static uint64_t s_last_flush_ms = 0;
-+    static uint32_t s_lines = 0;
-+    pthread_mutex_lock(&s_switch_log_mutex);
-+    while (len > 0) {
-+        const ssize_t n = write(STDOUT_FILENO, buf, len);
-+        if (n <= 0) {
-+            break;
-+        }
-+        buf += n;
-+        len -= (size_t)n;
-+    }
-+    s_lines++;
-+    struct timespec ts;
-+    clock_gettime(CLOCK_MONOTONIC, &ts);
-+    uint64_t now_ms = (uint64_t)ts.tv_sec * 1000ull + (uint64_t)(ts.tv_nsec / 1000000);
-+    if (flush_now || s_lines >= 64 || now_ms - s_last_flush_ms >= 1000) {
-+        fsync(STDOUT_FILENO);
-+        s_last_flush_ms = now_ms;
-+        s_lines = 0;
-+    }
-+    pthread_mutex_unlock(&s_switch_log_mutex);
++    if (flush_now) melee_nx_log_write_critical(buf, len);
++    else melee_nx_log_write(buf, len);
 +}
 +#endif
  
@@ -92,14 +75,14 @@ diff --git a/src/pc/main.c b/src/pc/main.c
 +        switch_log_write(line, (size_t)n < sizeof(line) ? (size_t)n : sizeof(line) - 1, level >= LOG_ERROR);
 +    }
 +    if (level == LOG_FATAL) {
-+        fsync(STDOUT_FILENO);
++        melee_nx_log_flush();
 +        abort();
 +    }
 +#elif defined(__ANDROID__)
      int prio = ANDROID_LOG_INFO;
      switch (level) {
      case LOG_DEBUG:
-@@ -275,7 +352,11 @@
+@@ -275,7 +315,11 @@
      return BACKEND_AUTO;
  }
  
@@ -111,7 +94,7 @@ diff --git a/src/pc/main.c b/src/pc/main.c
  #if defined(_WIN32)
      SetUnhandledExceptionFilter(crash_handler);
  #endif
-@@ -298,12 +379,37 @@
+@@ -298,12 +342,37 @@
              usage(argv[0]);
          }
      }
@@ -175,7 +158,7 @@ diff --git a/src/pc/os.c b/src/pc/os.c
  void pc_disc_ptr_overflow(const void* p, const char* file, int line) {
      fprintf(stderr, "%s:%d: pointer %p does not fit a 32-bit disc slot\n", file, line, p);
      abort();
-@@ -344,9 +357,79 @@
+@@ -344,9 +357,49 @@
  #include <android/log.h>
  #endif
  
@@ -200,40 +183,10 @@ diff --git a/src/pc/os.c b/src/pc/os.c
 +#include <pthread.h>
 +#include <unistd.h>
 +
-+static pthread_mutex_t s_switch_log_mutex = PTHREAD_MUTEX_INITIALIZER;
++#include "log_switch.h"
 +
-+// Single byte sink for every Switch log line, shared by OSReport and
-+// pc_log_line. write() only reaches Horizon's FS cache and is cheap; it is
-+// fsync() that forces the SD card and blocks tens to hundreds of ms, so fsync
-+// is batched (every 64 lines or 1s), never per line. Doing it per line on the
-+// main thread is what turned STALL/PERF telemetry into 30-687ms frame hitches
-+// -- the measurement was corrupting the measurement. The exit wrapper fsyncs a
-+// final time so a clean shutdown loses nothing.
 +void pc_switch_log_write(const char* buf, size_t len) {
-+    if (buf == NULL || len == 0) {
-+        return;
-+    }
-+    pthread_mutex_lock(&s_switch_log_mutex);
-+    while (len > 0) {
-+        const ssize_t n = write(STDOUT_FILENO, buf, len);
-+        if (n <= 0) {
-+            break;
-+        }
-+        buf += n;
-+        len -= (size_t)n;
-+    }
-+    static uint64_t s_last_flush_ms = 0;
-+    static uint32_t s_lines = 0;
-+    s_lines++;
-+    struct timespec ts;
-+    clock_gettime(CLOCK_MONOTONIC, &ts);
-+    uint64_t now_ms = (uint64_t)ts.tv_sec * 1000ull + (uint64_t)(ts.tv_nsec / 1000000);
-+    if (s_lines >= 64 || now_ms - s_last_flush_ms >= 1000) {
-+        fsync(STDOUT_FILENO);
-+        s_last_flush_ms = now_ms;
-+        s_lines = 0;
-+    }
-+    pthread_mutex_unlock(&s_switch_log_mutex);
++    melee_nx_log_write(buf, len);
 +}
 +
 +static void switch_log_vwrite(const char* msg, va_list list) {
@@ -255,15 +208,16 @@ diff --git a/src/pc/os.c b/src/pc/os.c
  #else
      vfprintf(stdout, msg, list);
      fflush(stdout);
-@@ -367,6 +450,11 @@
+@@ -367,6 +420,12 @@
      char buf[1024];
      vsnprintf(buf, sizeof(buf), msg, args);
      __android_log_print(ANDROID_LOG_FATAL, "OSPanic", "PANIC %s:%d: %s", file, line, buf);
 +#elif defined(__SWITCH__)
 +    char buf[1024];
 +    vsnprintf(buf, sizeof(buf), msg, args);
-+    OSReport("PANIC %s:%d: %s\n", file, line, buf);
-+    fsync(STDOUT_FILENO);
++    char record[1200];
++    int n = snprintf(record, sizeof(record), "PANIC %s:%d: %s\n", file, line, buf);
++    if (n > 0) melee_nx_log_write_critical(record, (size_t)n < sizeof(record) ? (size_t)n : sizeof(record) - 1);
  #else
      fprintf(stderr, "PANIC %s:%d: ", file, line);
      vfprintf(stderr, msg, args);

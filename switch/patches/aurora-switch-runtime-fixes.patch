@@ -1,0 +1,199 @@
+diff --git a/include/dolphin/gx/GXTexture.h b/include/dolphin/gx/GXTexture.h
+--- a/include/dolphin/gx/GXTexture.h
++++ b/include/dolphin/gx/GXTexture.h
+@@ -12,6 +12,9 @@
+ 
+ void GXInitTexObj(GXTexObj* obj, const void* data, u16 width, u16 height, GXTexFmt format, GXTexWrapMode wrapS,
+                   GXTexWrapMode wrapT, GXBool mipmap);
++// aurora extension (not stock GX): mark a texobj non-cacheable for per-frame
++// dynamic textures such as THP video planes. See GXTexture.cpp.
++void GXInitTexObjNoCache(GXTexObj* obj, GXBool no_cache);
+ void GXInitTexObjCI(GXTexObj* obj, const void* data, u16 width, u16 height, GXCITexFmt format, GXTexWrapMode wrapS,
+                     GXTexWrapMode wrapT, GXBool mipmap, u32 tlut);
+ void GXInitTexObjData(GXTexObj* obj, const void* data);
+diff --git a/lib/dolphin/card.cpp b/lib/dolphin/card.cpp
+--- a/lib/dolphin/card.cpp
++++ b/lib/dolphin/card.cpp
+@@ -1,5 +1,6 @@
+ #include "dolphin/card.h"
+ 
++#include <chrono>
+ #include <filesystem>
+ 
+ #include "../internal.hpp"
+@@ -38,7 +39,26 @@
+ bool Initialized = false;
+ // melee-pc: report "no card" to the game without touching the card image.
+ static bool CardPresent = true;
+-extern "C" void aurora_card_set_present(bool present) { CardPresent = present; }
++
++// CARDProbe presence cache. Melee polls CARDProbe from a periodic pad-sampling
++// alarm every frame -- and pc_os_run_alarms' catch-up loop can run that handler
++// up to 10x on a slow frame -- so probeCardFile()'s two SD filesystem syscalls
++// (exists + file_size) were costing 9-41 ms/frame on Switch (the STAGES
++// alarms_ms spike that capped gameplay fps). The card image is a file on SD that
++// only changes through the mount/create/format/delete paths below, so cache the
++// probe and re-hit the SD at most every CardProbeTtl. Any mutation invalidates.
++constexpr auto CardProbeTtl = std::chrono::milliseconds(500);
++static std::chrono::steady_clock::time_point s_cardProbeAt[2];
++static BOOL s_cardProbeResult[2] = {FALSE, FALSE};
++static bool s_cardProbeValid[2] = {false, false};
++static void invalidate_card_probe_cache() {
++  s_cardProbeValid[0] = s_cardProbeValid[1] = false;
++}
++
++extern "C" void aurora_card_set_present(bool present) {
++  CardPresent = present;
++  invalidate_card_probe_cache();
++}
+ // melee-pc: completion callbacks go through a dispatcher so the game can
+ // defer them (on GameCube they arrived from a later interrupt, never from
+ // inside the CARD*Async call itself).
+@@ -406,6 +426,7 @@
+   const auto& card = GET_CARD(chan);
+   card->format(static_cast<aurora::card::ECardSlot>(chan));
+   card->commit();
++  invalidate_card_probe_cache();  // format writes the card image; presence may flip
+   return CARD_RESULT_READY;
+ }
+ 
+@@ -572,10 +593,17 @@
+   if (!CardPresent) {
+     return FALSE;
+   }
++  const auto now = std::chrono::steady_clock::now();
++  if (s_cardProbeValid[chan] && now - s_cardProbeAt[chan] < CardProbeTtl) {
++    return s_cardProbeResult[chan];
++  }
+   const auto& card = GET_CARD(chan);
+ 
+   aurora::card::ProbeResults probeData = card->probeCardFile(cardPaths[chan]);
+-  return probeData.x0_error != aurora::card::ECardResult::NOCARD ? TRUE : FALSE;
++  s_cardProbeResult[chan] = probeData.x0_error != aurora::card::ECardResult::NOCARD ? TRUE : FALSE;
++  s_cardProbeAt[chan] = now;
++  s_cardProbeValid[chan] = true;
++  return s_cardProbeResult[chan];
+ }
+ 
+ s32 CARDProbeEx(const s32 chan, s32* memSize, s32* sectorSize) {
+diff --git a/lib/dolphin/gx/GXTexture.cpp b/lib/dolphin/gx/GXTexture.cpp
+--- a/lib/dolphin/gx/GXTexture.cpp
++++ b/lib/dolphin/gx/GXTexture.cpp
+@@ -18,21 +18,36 @@
+ constexpr u8 GXTexTlutIds[8] = {0x98, 0x99, 0x9A, 0x9B, 0xB8, 0xB9, 0xBA, 0xBB};
+ constexpr u8 GX2HWFiltConv[6] = {0x00, 0x04, 0x01, 0x05, 0x02, 0x06};
+ 
+-u32 sNextTexObjId = 1;
+-u32 sNextTlutObjId = 1;
+-
+-u32 next_tex_obj_id() {
+-  if (sNextTexObjId == 0) {
+-    FATAL("texObj ID overflow");
+-  }
+-  return sNextTexObjId++;
+-}
+-
+-u32 next_tlut_obj_id() {
+-  if (sNextTlutObjId == 0) {
+-    FATAL("tlutObj ID overflow");
+-  }
+-  return sNextTlutObjId++;
++// Melee re-inits texobjs every frame, so a monotonic id made aurora's per-frame
++// object cache miss 100% of the time -- forcing a full XXH3 content hash of every
++// bound texture every frame and unbounded object-cache growth (the multi-ms
++// per-frame sweep seen in TEXSTATS). Deriving the id from the descriptor
++// (pointer + dims + format) instead makes identical re-inits collapse to one
++// stable key so the object cache hits. The resolver (lib/gx/texture.cpp)
++// re-verifies pointer+dims+format on every hit (so a hash collision is caught)
++// and periodically re-hashes the bytes (so an in-place content change under a
++// reused pointer self-heals). Never returns 0 (0 means "no cache").
++u32 mix_obj_id(u64 h) {
++  h ^= h >> 33;
++  h *= 0xff51afd7ed558ccdull;
++  h ^= h >> 33;
++  h *= 0xc4ceb9fe1a85ec53ull;
++  h ^= h >> 33;
++  const auto id = static_cast<u32>(h) ^ static_cast<u32>(h >> 32);
++  return id == 0 ? 1u : id;
++}
++
++u32 stable_tex_obj_id(const void* data, u16 width, u16 height, u32 format, bool mipmap) {
++  u64 h = reinterpret_cast<u64>(data);
++  h = h * 0x100000001b3ull + (static_cast<u64>(width) | (static_cast<u64>(height) << 16));
++  h = h * 0x100000001b3ull + (static_cast<u64>(format) | (static_cast<u64>(mipmap) << 32));
++  return mix_obj_id(h);
++}
++
++u32 stable_tlut_obj_id(const void* data, u32 format, u16 entries) {
++  u64 h = reinterpret_cast<u64>(data);
++  h = h * 0x100000001b3ull + (static_cast<u64>(format) | (static_cast<u64>(entries) << 32));
++  return mix_obj_id(h);
+ }
+ 
+ int __cntlzw(unsigned int val) {
+@@ -55,7 +70,7 @@
+   obj.mFormat = format;
+   obj.tlut = GX_TLUT0;
+   obj.flags = 2;
+-  obj.texObjId = next_tex_obj_id();
++  obj.texObjId = stable_tex_obj_id(data, width, height, format, mipmap != 0);
+   obj.texDataVersion = 1;
+ 
+   SET_REG_FIELD(0, obj.mode0, 2, 0, wrapS);
+@@ -86,6 +101,13 @@
+   GX_WRITE_U32(obj.format());
+   GX_WRITE_U32(static_cast<u32>(obj.tlut));
+   GX_WRITE_U8(static_cast<u8>(obj.has_mips()));
++  // Propagate no_cache so per-frame dynamic textures (e.g. THP video planes,
++  // re-decoded into the same buffer every frame) bypass the object cache on the
++  // resolve side and always upload the fresh contents. Without this the command
++  // processor strips the flag and the stable-id object cache can serve a stale
++  // frame. Kept adjacent to has_mips so the read order in command_processor.cpp
++  // matches.
++  GX_WRITE_U8(static_cast<u8>(obj.no_cache() ? 1 : 0));
+   GX_WRITE_U32(obj.texObjId);
+   GX_WRITE_U32(obj.texDataVersion);
+ }
+@@ -106,6 +128,14 @@
+                   GXTexWrapMode wrapT, GXBool mipmap) {
+   auto* obj = reinterpret_cast<GXTexObj_*>(obj_);
+   init_texobj_common(*obj, data, width, height, format, wrapS, wrapT, mipmap);
++}
++
++// aurora extension: mark a texobj as non-cacheable so the resolve-side object
++// cache never reuses a handle for it. Intended for textures the game re-decodes
++// into the same buffer every frame (THP video planes). Propagated through the GX
++// FIFO by emit_loaded_texobj_metadata / command_processor.
++void GXInitTexObjNoCache(GXTexObj* obj_, GXBool no_cache) {
++  reinterpret_cast<GXTexObj_*>(obj_)->set_no_cache(no_cache != 0);
+ }
+ 
+ void GXInitTexObjCI(GXTexObj* obj_, const void* data, u16 width, u16 height, GXCITexFmt format, GXTexWrapMode wrapS,
+@@ -311,7 +341,7 @@
+   obj->data = data;
+   obj->format = format;
+   obj->numEntries = entries;
+-  obj->tlutObjId = next_tlut_obj_id();
++  obj->tlutObjId = stable_tlut_obj_id(data, static_cast<u32>(format), entries);
+   obj->tlutDataVersion = 1;
+ 
+   SET_REG_FIELD(0, obj->tlut, 2, 10, format);
+diff --git a/lib/gx/texture.hpp b/lib/gx/texture.hpp
+--- a/lib/gx/texture.hpp
++++ b/lib/gx/texture.hpp
+@@ -31,6 +31,15 @@
+ constexpr uint64_t ContentCacheBudgetBytes = 128ull * 1024ull * 1024ull;
+ constexpr uint64_t ObjectCacheIdleFrames = 600;
+ #endif
++// texObjId/tlutObjId are now stable descriptor hashes (GXTexture.cpp) so the
++// per-frame object cache actually hits instead of re-hashing every texture's
++// full bytes every frame. GXInvalidateTexAll is a no-op, so nothing signals an
++// in-place content change (e.g. a THP video plane re-decoded into the same
++// buffer each frame). The object-cache fast path therefore verifies a cheap
++// bounded content signature (quick_texture_sig, ~1 KB sampled) on every bind:
++// identical descriptor + identical signature = reuse the cached handle without
++// the full hash; a changed signature falls through to the full content hash and
++// re-upload. This detects in-place mutation on the very next frame.
+ constexpr bool AsyncTextureReplacements = true;
+ constexpr uint32_t ReplacementThumbnailDim = 64;
+ constexpr uint64_t ReplacementPublishBudgetBytes = 12ull * 1024ull * 1024ull;

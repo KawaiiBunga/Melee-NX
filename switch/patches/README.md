@@ -18,10 +18,12 @@ Patches applied idempotently by `builder/build-graphics.sh` and `builder/build-m
 | `aurora-switch-no-mmap.patch` | `ref/melee-pc/extern/aurora` | Replaces unsupported mmap-dependent behavior for Horizon/newlib |
 | `aurora-switch-mem1-window.patch` | `ref/melee-pc/extern/aurora` | Makes Aurora resolve Melee's 32-bit disc-pointer slots through the MEM1 4 GiB window |
 | `aurora-switch-encoder-state-cache.patch` | `ref/melee-pc/extern/aurora` | Dusklight-derived render-pass-scoped suppression of redundant texture bind-group and destination-alpha blend-constant calls |
-| `aurora-switch-cache-recovery.patch` | `ref/melee-pc/extern/aurora` | Descriptor-cache recovery and I/O lock, compiler pin/priority/pacing, skipped-draw telemetry |
-| `aurora-switch-blob-cache-batch.patch` | `ref/melee-pc/extern/aurora` | Dawn cache recovery, batched writes, flush API declarations |
-| `aurora-switch-texture-telemetry.patch` | `ref/melee-pc/extern/aurora` | Per-frame texture cache stats (`TEXSTATS`) and stage timing in `gx::end_frame` |
+| `aurora-switch-cache-recovery.patch` | `ref/melee-pc/extern/aurora` | Descriptor-cache recovery/I/O lock, adaptive compiler pacing, optional second worker, in-flight request tracking/write deduplication, pipeline telemetry |
+| `aurora-switch-blob-cache-batch.patch` | `ref/melee-pc/extern/aurora` | Dawn cache recovery, batched writes, flush API declarations, hit/miss and callback timing telemetry |
+| `aurora-switch-texture-telemetry.patch` | `ref/melee-pc/extern/aurora` | Stable texture identity/content checks, dynamic-texture cache bypass, `TEXSTATS` and end-frame timing |
 | `aurora-switch-perf-imgui.patch` | `ref/melee-pc/extern/aurora` | ImGui pass reuse, Dawn status compatibility, flush API implementation and end-frame stage timers |
+| `aurora-switch-gx-cpu.patch` | `ref/melee-pc/extern/aurora` | Dusklight-derived redundant effective-state suppression and bounded exact-key shader analysis; preserves movie texture dirtiness; `GXCPU` counters |
+| `aurora-switch-runtime-fixes.patch` | `ref/melee-pc/extern/aurora` | Previously uncaptured card-probe TTL, stable texture IDs and no-cache texture API/metadata |
 | `aurora-switch-thread-sweep.patch` | `ref/melee-pc/extern/aurora` | Connects named thread setup to the optional Switch affinity sweep |
 | `melee-switch-gcc-compat.patch` | `ref/melee-pc` | Launcher/resource/file-cache compatibility, recovered audio changes and negotiated-device telemetry |
 | `melee-switch-disc-ptr-window.patch` | `ref/melee-pc` | Adds MEM1-window pointer encoding/resolution and converts raw disc-slot casts to `DP()` |
@@ -50,12 +52,13 @@ bodies. Regenerate the melee-nx layer by reading `release-3.4.10` into a
 scratch index, `git apply --cached --recount` the Dusklight patch, then
 `git diff` the worktree against that index.
 
-## Reconstructed patch ownership (2026-09-19)
+## Reconstructed patch ownership (2026-09-21)
 
 The Melee/Aurora patches now own disjoint files against melee-pc revision
-`7c9a468f4f8206780c4cd762be1da7772daaeabf`. They preserve the complete recovered
-source state, including previously uncaptured performance and compatibility
-edits. The old status and pipeline-I/O patches are absorbed into the owning
+`7c9a468f4f8206780c4cd762be1da7772daaeabf`. They preserve the current
+hardware-tested source state, including previously uncaptured September 20
+card/texture/movie and compiler/cache edits. Verification covers 18 patches
+and 68 Melee/Aurora files, plus the SDL stack. The old status and pipeline-I/O patches are absorbed into the owning
 patches above. `build-graphics.sh` applies the profiler patch as well.
 
 Aurora patch paths are relative to `extern/aurora`; Melee patch paths are

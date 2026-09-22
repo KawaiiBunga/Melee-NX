@@ -106,6 +106,8 @@ prepare() {
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-platform-compat.patch"
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-perf-imgui.patch"
   apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-thread-sweep.patch"
+  apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-gx-cpu.patch"
+  apply_patch_once "$aurora"                      "$repo/switch/patches/aurora-switch-runtime-fixes.patch"
 }
 
 build_dawn() {

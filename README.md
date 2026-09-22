@@ -14,18 +14,24 @@ You supply your own disc image. No game code or assets are distributed here.
 
 ## Status
 
-**Playable, improving.** It boots on real hardware, reaches the main menu, and
-plays matches at roughly 36 fps (median) / 57 (90th percentile) at 720p on stock
-clocks. A locked 60 is the remaining goal.
+**Playable, improving.** The September 21 hardware capture includes a
+four-fighter game at 720p and stock clocks. A representative seven-minute
+window averaged **55.4 FPS**; a later scene fell to **42.4 FPS**. Sustained
+60 FPS is still the target. These are results from one session, not a guarantee
+for every stage or a controlled benchmark.
 
 | | |
 |---|---|
 | Boots on hardware | yes |
 | Menus | render and respond |
-| Gameplay | ~36 fps median, up to 60, at 720p stock clocks |
-| Audio | works, latent |
-| Rendering | can briefly drop geometry while a shader pipeline is still compiling |
-| Load transitions | occasional multi-second hitch while streaming assets |
+| Gameplay | often near 60; busy scenes and hitches still cause drops |
+| Audio | works; latency tuning remains open |
+| Rendering | geometry can appear late while shader pipelines compile |
+| Load transitions | long hitches still occur and need further profiling |
+
+The current build reduces redundant GX pipeline work and reuses shader
+analysis. Shader caches persist and the latest snapshots pass integrity checks,
+but cache hits and background compilation still cost time on Switch.
 
 ---
 

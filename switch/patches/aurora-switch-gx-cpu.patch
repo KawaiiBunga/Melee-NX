@@ -1,0 +1,301 @@
+diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
+--- a/lib/gx/command_processor.cpp
++++ b/lib/gx/command_processor.cpp
+@@ -12,6 +12,9 @@
+ #include "pipeline.hpp"
+ #include "regs.hpp"
+ #include "shader_info.hpp"
++#if defined(__SWITCH__)
++#include "gx_pipeline_reuse.hpp"
++#endif
+ #include "texture.hpp"
+ 
+ #include <tracy/Tracy.hpp>
+@@ -145,6 +148,18 @@
+   GXVtxFmt lastDrawFmt = GX_MAX_VTXFMT;
+ };
+ DrawCache sDrawCache;
++#if defined(__SWITCH__)
++// Adapted from dusklight-nx's Aurora: reuse analysis, but verify the complete
++// configuration on every hit and bound storage without a full-cache clear.
++static melee_nx::ShaderInfoCache<ShaderConfig, ShaderInfo, 256> sShaderInfoCache;
++static uint64_t sSamePipeline = 0, sShaderInfoHits = 0, sShaderInfoMisses = 0;
++static ShaderInfo cached_shader_info(const ShaderConfig& config) noexcept {
++  bool hit;
++  const auto info = sShaderInfoCache.get(config, xxh3_hash(config), build_shader_info, hit);
++  if (hit) ++sShaderInfoHits; else ++sShaderInfoMisses;
++  return info;
++}
++#endif
+ 
+ FogRangeLutKey fog_range_lut_key() noexcept {
+   const auto& state = g_gxState.fog;
+@@ -404,11 +419,28 @@
+   const bool pipelineValid = cache.hasPipeline && (state.dirty & DirtyPipeline) == 0 && cache.fmt == fmt &&
+                              cache.lineMode == lineMode && cache.config.msaaSamples == gfx::get_sample_count();
+   if (!pipelineValid) {
++#if defined(__SWITCH__)
++    PipelineConfig nextConfig{};
++    populate_pipeline_config(nextConfig, prim, fmt);
++    if (melee_nx::same_pipeline_config(cache.hasPipeline, nextConfig, cache.config)) {
++      // Register writes can dirty the pipeline without changing its effective
++      // key. Keep any explicit uniform/texture dirtiness; it still needs work.
++      cache.fmt = fmt;
++      cache.lineMode = lineMode;
++      state.dirty &= ~DirtyPipeline;
++      ++sSamePipeline;
++    } else {
++#endif
+     const bool hadPipeline = cache.hasPipeline;
+     const auto prevSampledTextures = cache.shaderInfo.sampledTextures;
+     const auto prevSampledIndTextures = cache.shaderInfo.sampledIndTextures;
++#if defined(__SWITCH__)
++    cache.config = nextConfig;
++    cache.shaderInfo = cached_shader_info(cache.config.shaderConfig);
++#else
+     populate_pipeline_config(cache.config, prim, fmt);
+     cache.shaderInfo = build_shader_info(cache.config.shaderConfig);
++#endif
+     cache.pipelineRef = gfx::pipeline_ref(cache.config);
+     cache.fmt = fmt;
+     cache.lineMode = lineMode;
+@@ -418,6 +450,9 @@
+         prevSampledIndTextures != cache.shaderInfo.sampledIndTextures) {
+       cache.bindGeneration = 0;
+     }
++#if defined(__SWITCH__)
++    }
++#endif
+   }
+ 
+   const bool bindGroupsValid =
+@@ -585,6 +620,21 @@
+   if (totalVtxBytes > reader.remaining())
+     UNLIKELY { handle_draw_overrun(totalVtxBytes, reader); }
+ 
++#if defined(__SWITCH__)
++  // Match Dusklight's redundant-state check before the existing merge path.
++  // A real configuration change, explicit uniform/texture update, or line/
++  // point topology still follows the original unmerged path.
++  if ((g_gxState.dirty & DirtyPipeline) != 0 && sDrawCache.hasPipeline &&
++      fmt == sDrawCache.lastDrawFmt && sDrawCache.lineMode == 0 &&
++      prim != GX_LINES && prim != GX_LINESTRIP && prim != GX_POINTS) {
++    PipelineConfig nextConfig{};
++    populate_pipeline_config(nextConfig, prim, fmt);
++    if (melee_nx::same_pipeline_config(true, nextConfig, sDrawCache.config)) {
++      g_gxState.dirty &= ~DirtyPipeline;
++      ++sSamePipeline;
++    }
++  }
++#endif
+   const bool cleanState = g_gxState.dirty == 0 && fmt == sDrawCache.lastDrawFmt && sDrawCache.lineMode == 0 &&
+                           prim != GX_LINES && prim != GX_LINESTRIP && prim != GX_POINTS;
+   auto* lastDraw = cleanState ? gfx::get_last_draw_command<DrawData>() : nullptr;
+@@ -737,15 +787,23 @@
+     const u32 newHeight = reader.read<u32>();
+     const auto newFormat = static_cast<GXTexFmt>(reader.read<u32>());
+     const auto newTlut = static_cast<GXTlut>(reader.read<u32>());
+-    u8 newFlags = slot.flags & ~0x80u; // Reset no-cache flag
++    u8 newFlags = slot.flags & ~0x81u;
+     if (reader.read<u8>() != 0) {
+-      newFlags |= 1u;
+-    } else {
+-      newFlags &= ~1u;
++      newFlags |= 1u; // has_mips
++    }
++    if (reader.read<u8>() != 0) {
++      newFlags |= 0x80u; // no_cache (per-frame dynamic textures, e.g. THP planes)
+     }
+     const u32 newTexObjId = reader.read<u32>();
+     const u32 newTexDataVersion = reader.read<u32>();
+-    if (slot.data != newData || slot.mWidth != newWidth || slot.mHeight != newHeight ||
++    // no_cache textures are dynamic: the game re-decodes new content into the
++    // SAME buffer every frame (THP video planes), so data ptr / dims / format /
++    // stable texObjId / texDataVersion are all identical frame-to-frame. Without
++    // forcing DirtyTextures here the slot-change check below is false and the
++    // texture is never re-resolved -> the GPU keeps showing the first decoded
++    // frame (frozen / stale video). Always re-mark a no_cache slot dirty.
++    const bool dynamicTexObj = (newFlags & 0x80u) != 0;
++    if (dynamicTexObj || slot.data != newData || slot.mWidth != newWidth || slot.mHeight != newHeight ||
+         slot.mFormat != static_cast<u32>(newFormat) || slot.tlut != newTlut || slot.flags != newFlags ||
+         slot.texObjId != newTexObjId || slot.texDataVersion != newTexDataVersion) {
+       slot.data = newData;
+@@ -886,6 +944,16 @@
+ }
+ 
+ void clear_draw_cache() noexcept {
++#if defined(__SWITCH__)
++  // Called after FIFO drain; the FIFO-owned counters are quiescent here.
++  static unsigned frames = 0;
++  if (++frames == 120) {
++    Log.info("GXCPU same_pipeline {} shader_info_hits {} shader_info_misses {} over {} frames",
++             sSamePipeline, sShaderInfoHits, sShaderInfoMisses, frames);
++    sSamePipeline = sShaderInfoHits = sShaderInfoMisses = 0;
++    frames = 0;
++  }
++#endif
+   sDrawCache.bindGeneration = 0;
+   sDrawCache.uniformRange = {};
+   sDrawCache.fogRange = {};
+diff --git a/lib/gx/fifo.cpp b/lib/gx/fifo.cpp
+--- a/lib/gx/fifo.cpp
++++ b/lib/gx/fifo.cpp
+@@ -6,6 +6,7 @@
+ #include <algorithm>
+ #include <atomic>
+ #include <cstring>
++#include <chrono>
+ #include <limits>
+ #include <mutex>
+ 
+@@ -37,6 +38,15 @@
+ std::atomic_bool sWorkerWaiting{false};
+ std::atomic_bool sMainThreadWaitingForProcessed{false};
+ thread::Thread sWorkerThread;
++#if defined(__SWITCH__)
++using PerfClock = std::chrono::steady_clock;
++uint64_t sProcessNs = 0, sBufferWaitNs = 0, sBatches = 0, sBytes = 0;
++uint64_t sDrainNs = 0, sGrowNs = 0, sGrowCount = 0;
++uint32_t sPerfFrames = 0;
++uint64_t elapsed_ns(PerfClock::time_point start) {
++  return std::chrono::duration_cast<std::chrono::nanoseconds>(PerfClock::now() - start).count();
++}
++#endif
+ std::atomic<DrawDoneCallback> sDrawDoneCallback{nullptr};
+ 
+ void dispatch_draw_done() noexcept {
+@@ -56,14 +66,26 @@
+   uint64_t processed = sProcessed.load(std::memory_order_relaxed);
+   while (processed < target) {
+     ProcessResult result{};
++#if defined(__SWITCH__)
++    const auto lockStart = PerfClock::now();
++#endif
+     {
+       std::lock_guard lock{sBufferMutex};
++#if defined(__SWITCH__)
++      sBufferWaitNs += elapsed_ns(lockStart);
++      const auto processStart = PerfClock::now();
++#endif
+       AURORA_ASSERT(processed >= sStreamBase && target <= sStreamBase + detail::sBufferSize,
+                     "FIFO processing range [{}, {}) is outside buffered range [{}, {})", processed, target, sStreamBase,
+                     sStreamBase + detail::sBufferSize);
+       const auto start = static_cast<uint32_t>(processed - sStreamBase);
+       const auto size = static_cast<uint32_t>(target - processed);
+       result = process(detail::sBufferData + start, size);
++#if defined(__SWITCH__)
++      sProcessNs += elapsed_ns(processStart);
++      ++sBatches;
++      sBytes += result.bytesProcessed;
++#endif
+     }
+     AURORA_ASSERT(result.bytesProcessed > 0 && result.bytesProcessed <= target - processed,
+                   "FIFO processor made invalid progress: processed {} of {} remaining bytes", result.bytesProcessed,
+@@ -157,9 +179,22 @@
+ void end_frame() noexcept {
+   sFrameActive = false;
+   clear_draw_cache(); // command_processor
++#if defined(__SWITCH__)
++  if (++sPerfFrames == 120) {
++    Log.info("FIFOWORK frames {} process_ms {:.3f} buffer_wait_ms {:.3f} drain_ms {:.3f} "
++             "grow_ms {:.3f} grows {} batches {} bytes {}", sPerfFrames,
++             sProcessNs / 1e6 / sPerfFrames, sBufferWaitNs / 1e6 / sPerfFrames,
++             sDrainNs / 1e6 / sPerfFrames, sGrowNs / 1e6 / sPerfFrames, sGrowCount, sBatches, sBytes);
++    sProcessNs = sBufferWaitNs = sDrainNs = sGrowNs = sGrowCount = sBatches = sBytes = 0;
++    sPerfFrames = 0;
++  }
++#endif
+ }
+ 
+ void write_data_grow(const void* data, uint32_t length) {
++#if defined(__SWITCH__)
++  const auto growStart = PerfClock::now();
++#endif
+   const uint64_t needed64 = static_cast<uint64_t>(detail::sBufferSize) + length;
+   AURORA_ASSERT(needed64 <= std::numeric_limits<uint32_t>::max(), "fifo::write_data: buffer size overflow");
+   const auto needed = static_cast<uint32_t>(needed64);
+@@ -180,6 +215,10 @@
+   std::memcpy(detail::sBufferData + detail::sBufferSize, data, length);
+   detail::sBufferSize = needed;
+   detail::sBufferCapacity = newCapacity;
++#if defined(__SWITCH__)
++  sGrowNs += elapsed_ns(growStart);
++  ++sGrowCount;
++#endif
+ }
+ 
+ void publish() noexcept {
+@@ -250,6 +289,9 @@
+   }
+ 
+   ZoneScoped;
++#if defined(__SWITCH__)
++  const auto drainStart = PerfClock::now();
++#endif
+   const uint64_t target = sStreamBase + detail::sBufferSize;
+ 
+   switch (kProcessingMode) {
+@@ -281,6 +323,9 @@
+     detail::sBufferSize = 0;
+   }
+   sPendingDraws = 0;
++#if defined(__SWITCH__)
++  sDrainNs += elapsed_ns(drainStart);
++#endif
+ }
+ 
+ const uint8_t* get_buffer_data() { return detail::sBufferData; }
+diff --git a/lib/gfx/render_worker.cpp b/lib/gfx/render_worker.cpp
+--- a/lib/gfx/render_worker.cpp
++++ b/lib/gfx/render_worker.cpp
+@@ -1,6 +1,7 @@
+ #include "render_worker.hpp"
+ 
+ #include "../thread.hpp"
++#include "../logging.hpp"
+ 
+ #include <algorithm>
+ #include <atomic>
+@@ -33,6 +34,10 @@
+ 
+ void worker_main(std::stop_token token) {
+   g_workerThreadId = std::this_thread::get_id();
++#if defined(__SWITCH__)
++  uint64_t beginNs = 0, encodeNs = 0, endNs = 0, syncNs = 0, passes = 0;
++  unsigned frames = 0;
++#endif
+ 
+   while (true) {
+     bool closed = false;
+@@ -44,10 +49,31 @@
+       continue;
+     }
+ 
++#if defined(__SWITCH__)
++    const auto workStart = std::chrono::steady_clock::now();
++#endif
+     if (item->work) {
+       ZoneScopedN("QueueItem work");
+       item->work();
+     }
++#if defined(__SWITCH__)
++    const auto workNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
++        std::chrono::steady_clock::now() - workStart).count();
++    switch (item->type) {
++    case ItemType::BeginFrame: beginNs += workNs; break;
++    case ItemType::EncodePass: encodeNs += workNs; ++passes; break;
++    case ItemType::EndFrame: endNs += workNs; ++frames; break;
++    default: syncNs += workNs; break;
++    }
++    if (frames == 120) {
++      constexpr Module Log{"aurora::render_worker"};
++      Log.info("RENDERWORK frames {} begin_ms {:.3f} encode_ms {:.3f} end_ms {:.3f} "
++               "sync_ms {:.3f} passes {}", frames, beginNs / 1e6 / frames, encodeNs / 1e6 / frames,
++               endNs / 1e6 / frames, syncNs / 1e6 / frames, passes);
++      beginNs = encodeNs = endNs = syncNs = passes = 0;
++      frames = 0;
++    }
++#endif
+     complete_sync(item->sync);
+     g_pendingItems.fetch_sub(1, std::memory_order_acq_rel);
+     if (item->type == ItemType::Shutdown) {

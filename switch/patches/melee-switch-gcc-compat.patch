@@ -127,16 +127,30 @@ diff --git a/src/pc/audio.c b/src/pc/audio.c
 diff --git a/src/pc/file_cache.cpp b/src/pc/file_cache.cpp
 --- a/src/pc/file_cache.cpp
 +++ b/src/pc/file_cache.cpp
-@@ -24,6 +24,8 @@
- #include <dolphin/ar.h>
+@@ -25,6 +25,8 @@
  #include <dolphin/dvd.h>
  #include <dolphin/os.h>
-+
-+#include "switch_io_lock.h"
  
++#include "switch_io_lock.h"
++
  namespace {
  
-@@ -188,6 +190,7 @@
+ struct CachedEntry {
+@@ -97,7 +99,12 @@
+         size_t mb = static_cast<size_t>(strtoul(env_mb, nullptr, 10));
+         if (mb <= 24)
+             return PROFILE_LOW_RAM;
+-        if (mb <= 96)
++        // Handheld (Switch) keeps its gentle Tier-1 prewarm + 5ms pacing even with
++        // a large byte budget. The budget (get_default_budget_bytes) is a separate
++        // knob from the profile; only budgets sized for a real desktop (> 320 MB)
++        // opt into the DESKTOP profile's aggressive 200us full-directory prewarm,
++        // which would saturate the Switch SD reader. See set_file_cache_budget().
++        if (mb <= 320)
+             return PROFILE_HANDHELD;
+         return PROFILE_DESKTOP;
+     }
+@@ -188,6 +195,7 @@
      // 1. Check if loose file exists
      std::string loose_path = resolve_loose_path(key.c_str());
      if (!loose_path.empty()) {
@@ -144,7 +158,7 @@ diff --git a/src/pc/file_cache.cpp b/src/pc/file_cache.cpp
          struct stat st;
          if (stat(loose_path.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
              std::ifstream in(loose_path, std::ios::binary);
-@@ -312,6 +315,7 @@
+@@ -312,6 +320,7 @@
      // Check loose file directory override
      std::string loose_path = resolve_loose_path(key.c_str());
      if (!loose_path.empty()) {
@@ -152,7 +166,7 @@ diff --git a/src/pc/file_cache.cpp b/src/pc/file_cache.cpp
          struct stat st;
          if (stat(loose_path.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
              std::ifstream in(loose_path, std::ios::binary);
-@@ -353,6 +357,7 @@
+@@ -353,6 +362,7 @@
  
      std::string loose_path = resolve_loose_path(key.c_str());
      if (!loose_path.empty()) {
@@ -375,3 +389,71 @@ diff --git a/src/pc/launcher_data.cpp b/src/pc/launcher_data.cpp
      return ok;
  }
  }  // namespace launcher
+diff --git a/src/melee/lb/lb_01F8.c b/src/melee/lb/lb_01F8.c
+--- a/src/melee/lb/lb_01F8.c
++++ b/src/melee/lb/lb_01F8.c
+@@ -61,18 +61,28 @@
+     GXInitTexObj(&lbl_804335B8.tex0, lbl_804335B8.x20, lbl_804335B8.x6C,
+                  lbl_804335B8.x6E, 1, 0, 0, 0);
+     GXInitTexObjLOD(&lbl_804335B8.tex0, 0, 0, 0.0F, 0.0F, 0.0F, 0, 0, 0);
++#ifdef TARGET_PC
++    /* Re-decoded into the same buffer every frame: never cache (see lbmthp.c). */
++    GXInitTexObjNoCache(&lbl_804335B8.tex0, GX_TRUE);
++#endif
+     GXLoadTexObj(&lbl_804335B8.tex0, 0);
+ 
+     /* Second texture - half size */
+     GXInitTexObj(&lbl_804335B8.tex1, lbl_804335B8.x44, (u16) (*pWidth >> 1),
+                  (u16) (*pHeight >> 1), 1, 0, 0, 0);
+     GXInitTexObjLOD(&lbl_804335B8.tex1, 0, 0, 0.0F, 0.0F, 0.0F, 0, 0, 0);
++#ifdef TARGET_PC
++    GXInitTexObjNoCache(&lbl_804335B8.tex1, GX_TRUE);
++#endif
+     GXLoadTexObj(&lbl_804335B8.tex1, 1);
+ 
+     /* Third texture - half size */
+     GXInitTexObj(&lbl_804335B8.tex2, lbl_804335B8.x68, (u16) (*pWidth >> 1),
+                  (u16) (*pHeight >> 1), 1, 0, 0, 0);
+     GXInitTexObjLOD(&lbl_804335B8.tex2, 0, 0, 0.0F, 0.0F, 0.0F, 0, 0, 0);
++#ifdef TARGET_PC
++    GXInitTexObjNoCache(&lbl_804335B8.tex2, GX_TRUE);
++#endif
+     GXLoadTexObj(&lbl_804335B8.tex2, 2);
+ 
+     HSD_SObjLib_803A49E0(gobj, arg1);
+diff --git a/src/melee/lb/lbmthp.c b/src/melee/lb/lbmthp.c
+--- a/src/melee/lb/lbmthp.c
++++ b/src/melee/lb/lbmthp.c
+@@ -647,6 +647,12 @@
+                      GX_CLAMP, GX_CLAMP, 0U);
+         GXInitTexObjLOD(&streamPlayer->unk_178, GX_NEAR, GX_NEAR, 0.0f, 0.0f,
+                         0.0f, 0U, 0U, GX_ANISO_1);
++#ifdef TARGET_PC
++        /* Re-decoded into the same buffer every frame: never cache it, or the
++         * resolve-side object cache serves a stale/mismatched luma-chroma plane
++         * and the video renders corrupted. */
++        GXInitTexObjNoCache(&streamPlayer->unk_178, GX_TRUE);
++#endif
+         GXLoadTexObj(&streamPlayer->unk_178, GX_TEXMAP0);
+ 
+         GXInitTexObj(&streamPlayer->unk_198, streamPlayer->unk_54,
+@@ -654,6 +660,9 @@
+                      GX_TF_I8, GX_CLAMP, GX_CLAMP, 0U);
+         GXInitTexObjLOD(&streamPlayer->unk_198, GX_NEAR, GX_NEAR, 0.0f, 0.0f,
+                         0.0f, 0U, 0U, GX_ANISO_1);
++#ifdef TARGET_PC
++        GXInitTexObjNoCache(&streamPlayer->unk_198, GX_TRUE);
++#endif
+         GXLoadTexObj(&streamPlayer->unk_198, GX_TEXMAP1);
+ 
+         GXInitTexObj(&streamPlayer->unk_1B8, streamPlayer->unk_58,
+@@ -661,6 +670,9 @@
+                      GX_TF_I8, GX_CLAMP, GX_CLAMP, 0U);
+         GXInitTexObjLOD(&streamPlayer->unk_1B8, GX_NEAR, GX_NEAR, 0.0f, 0.0f,
+                         0.0f, 0U, 0U, GX_ANISO_1);
++#ifdef TARGET_PC
++        GXInitTexObjNoCache(&streamPlayer->unk_1B8, GX_TRUE);
++#endif
+         GXLoadTexObj(&streamPlayer->unk_1B8, GX_TEXMAP2);
+ 
+         HSD_SObjLib_803A49E0(gobj, arg1);

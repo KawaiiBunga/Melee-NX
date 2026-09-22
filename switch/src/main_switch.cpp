@@ -10,6 +10,7 @@
 
 #include "game_data/game_data_gate.h"
 #include "perf_switch.h"
+#include "log_switch.h"
 
 #include <SDL3/SDL_version.h>
 #include <switch.h>
@@ -438,6 +439,7 @@ extern "C" int main(int argc, char** argv) {
     setenv("SDL_AUDIO_DEVICE_SAMPLE_FRAMES", "1024", 1);
     set_file_cache_budget();
     log_build_manifest();
+    melee_nx_log_init();
     melee_nx_perf_init();
     melee_boot_trace("08 cache-budget  MELEE_CACHE_MAX_MB=%s",
                getenv("MELEE_CACHE_MAX_MB") ? getenv("MELEE_CACHE_MAX_MB") : "<unset>");

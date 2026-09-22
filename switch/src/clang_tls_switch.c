@@ -310,10 +310,12 @@ void melee_nx_sqlite_flush_all(void);
    uncommitted at any moment. Commit it before the SQLite handles are flushed
    below, or the batch is simply lost and recompiled on the next launch. */
 void aurora_flush_caches(void);
+void melee_nx_log_shutdown(void);
 
 __attribute__((noreturn)) static void kartpad_fast_exit(void) {
   aurora_flush_caches();
   melee_nx_sqlite_flush_all();
+  melee_nx_log_shutdown();
   fflush(NULL);
   /* fd 1 and fd 2 are melee-nx-runtime.log (main_switch.cpp's
      redirect_stdio_to_sd); commit them before the FS session goes away. */

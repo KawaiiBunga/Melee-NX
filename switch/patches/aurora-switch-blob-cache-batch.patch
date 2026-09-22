@@ -1,7 +1,7 @@
 diff --git a/include/aurora/aurora.h b/include/aurora/aurora.h
 --- a/include/aurora/aurora.h
 +++ b/include/aurora/aurora.h
-@@ -142,6 +142,10 @@ void aurora_set_resampler(AuroraSampler sampler);
+@@ -142,6 +142,10 @@
   *  game: with nothing drawing, a cleared framebuffer presents as black. */
  void aurora_preserve_frame_buffer(bool preserve);
  /** Sets the clock timescale. Default 1.0f. 0.0f is paused. Range 0.0f-16.0f. */
@@ -15,7 +15,7 @@ diff --git a/include/aurora/aurora.h b/include/aurora/aurora.h
 diff --git a/lib/webgpu/gpu.hpp b/lib/webgpu/gpu.hpp
 --- a/lib/webgpu/gpu.hpp
 +++ b/lib/webgpu/gpu.hpp
-@@ -76,6 +76,8 @@ void draw_clear(const wgpu::RenderPassEncoder& pass, bool clearColor, bool clear
+@@ -76,6 +76,8 @@
  size_t load_from_cache(void const* key, size_t keySize, void* value, size_t valueSize, void* userdata);
  void store_to_cache(void const* key, size_t keySize, void const* value, size_t valueSize, void* userdata);
  void cache_prune();
@@ -33,7 +33,25 @@ diff --git a/lib/webgpu/gpu_cache.cpp b/lib/webgpu/gpu_cache.cpp
  #include <cstring>
  #include <cstdint>
  #include <mutex>
-@@ -31,6 +33,32 @@ static std::vector<XXH128_hash_t> cache_keys_used;
+@@ -17,6 +19,9 @@
+ #endif
+ #define XXH_STATIC_LINKING_ONLY
+ #include <xxhash.h>
++#if defined(__SWITCH__)
++#include "blob_read_cache.hpp"
++#endif
+ 
+ namespace aurora::webgpu {
+ static Module Log("aurora::gpu::cache");
+@@ -26,11 +31,40 @@
+ static sqlite3_stmt* store_stmt;
+ static bool cache_broken;
+ static std::mutex cache_mutex;
++#if defined(__SWITCH__)
++static melee_nx::BlobReadCache read_cache;
++#endif
+ static std::vector<XXH128_hash_t> cache_keys_used;
+ #if defined(AURORA_CACHE_USE_ZSTD)
  static std::vector<uint8_t> compress_buffer;
  #endif
  
@@ -66,7 +84,17 @@ diff --git a/lib/webgpu/gpu_cache.cpp b/lib/webgpu/gpu_cache.cpp
  constexpr int CACHE_SCHEMA = 2;
  // % of rows pruned to trigger a full VACUUM
  constexpr uint64_t VacuumPrunePercentThreshold = 25;
-@@ -110,8 +138,12 @@ static bool cache_init_core() {
+@@ -40,6 +74,9 @@
+ }
+ 
+ static void init_abort() {
++#if defined(__SWITCH__)
++  read_cache.clear();
++#endif
+   cache_broken = true;
+   sqlite3_close(db);
+   db = nullptr;
+@@ -110,8 +147,12 @@
      return false;
    }
  
@@ -80,7 +108,7 @@ diff --git a/lib/webgpu/gpu_cache.cpp b/lib/webgpu/gpu_cache.cpp
    if (ret != SQLITE_OK) {
      Log.error("Failed to set pragmas: {}", sqlite3_errmsg(db));
      return false;
-@@ -200,6 +232,33 @@ static bool fill_used_key_table(const std::vector<XXH128_hash_t>& usedKeys) {
+@@ -200,6 +241,33 @@
    return true;
  }
  
@@ -114,7 +142,7 @@ diff --git a/lib/webgpu/gpu_cache.cpp b/lib/webgpu/gpu_cache.cpp
  static bool cache_init() {
    if (cache_broken) {
      return false;
-@@ -209,17 +268,110 @@ static bool cache_init() {
+@@ -209,22 +277,274 @@
      return true;
    }
  
@@ -137,8 +165,9 @@ diff --git a/lib/webgpu/gpu_cache.cpp b/lib/webgpu/gpu_cache.cpp
    }
  
 -  Log.debug("SQLite cache init succeeded");
+-
 +  Log.info("SQLite cache init succeeded after rebuild");
-+  return true;
+   return true;
 +}
 +
 +// Commit every buffered blob in one transaction. Caller holds cache_mutex.
@@ -178,11 +207,11 @@ diff --git a/lib/webgpu/gpu_cache.cpp b/lib/webgpu/gpu_cache.cpp
 +    }
 +  }
 +  check(sqlite3_clear_bindings(store_stmt));
- 
++
 +  tx.commit();
-   return true;
- }
- 
++  return true;
++}
++
 +void cache_flush() {
 +  std::lock_guard lock(cache_mutex);
 +  flush_pending_writes_locked();
@@ -198,12 +227,128 @@ diff --git a/lib/webgpu/gpu_cache.cpp b/lib/webgpu/gpu_cache.cpp
 +  return nullptr;
 +}
 +
++#if defined(__SWITCH__)
++static uint64_t s_blobHits = 0, s_blobMisses = 0, s_blobHitKb = 0;
++static uint64_t s_blobLookupNs = 0, s_blobLookupCount = 0, s_blobLockNs = 0;
++static uint64_t s_blobRamHits = 0, s_blobSqlReads = 0;
++static auto s_blobStatPrev = std::chrono::steady_clock::time_point{};
++
++static bool decode_blob(void* output, size_t size, const void* stored, size_t storedSize, bool compressed) {
++  if (!stored || !size) return false;
++  if (!compressed) {
++    if (storedSize != size) {
++      Log.error("Raw cache entry size mismatch: expected {}, got {}", size, storedSize);
++      return false;
++    }
++    std::memcpy(output, stored, size);
++    return true;
++  }
++#if defined(AURORA_CACHE_USE_ZSTD)
++  const auto result = ZSTD_decompress(output, size, stored, storedSize);
++  if (!ZSTD_isError(result) && result == size) return true;
++#endif
++  Log.error("Cache entry decompression failed or size mismatched");
++  return false;
++}
++
++// Size queries materialize a bounded decoded entry once. The subsequent copy
++// reuses it without SELECT, a read transaction, SD pages or decompression.
++// Oversized entries retain the size/copy protocol without filling RAM.
++static size_t load_blob_locked(const void* key, size_t keySize, void* value, size_t valueSize) {
++  if (!cache_init()) return 0;
++  const auto hash = XXH128(key, keySize, 0);
++  const auto copy = [&](const std::vector<uint8_t>& decoded) {
++    if (value && valueSize == decoded.size()) {
++      std::memcpy(value, decoded.data(), decoded.size());
++      cache_keys_used.push_back(hash);
++    }
++    return decoded.size();
++  };
++  if (const auto* cached = read_cache.find(hash.low64, hash.high64, key, keySize)) {
++    ++s_blobRamHits;
++    return copy(*cached);
++  }
++  const auto load = [&](size_t size, const void* stored, size_t storedSize, bool compressed) -> size_t {
++    if (!size) return 0;
++    // A caller with a wrong-sized output must not have that output touched.
++    if (value && valueSize != size) return size;
++    if (read_cache.accepts(keySize, size)) {
++      const auto* cached = read_cache.fill(hash.low64, hash.high64, key, keySize, size,
++          [&](void* out, size_t count) { return decode_blob(out, count, stored, storedSize, compressed); });
++      return cached ? copy(*cached) : 0;
++    }
++    if (value) {
++      if (!decode_blob(value, size, stored, storedSize, compressed)) return 0;
++      cache_keys_used.push_back(hash);
++    }
++    return size;
++  };
++  // Stores invalidate the RAM entry before becoming visible in this buffer.
++  if (const auto* pending = find_pending_write(hash)) {
++    return load(pending->originalSize, pending->stored.data(), pending->stored.size(), pending->compressed != 0);
++  }
++  // One SELECT has its own SQLite read snapshot until reset; an explicit
++  // BEGIN/ROLLBACK around the same single statement adds no consistency.
++  struct Reset {
++    ~Reset() { sqlite3_reset(load_stmt); sqlite3_clear_bindings(load_stmt); }
++  } reset;
++  if (check(sqlite3_bind_blob(load_stmt, 1, &hash, sizeof(hash), SQLITE_TRANSIENT)) != SQLITE_OK) return 0;
++  ++s_blobSqlReads;
++  const auto result = sqlite3_step(load_stmt);
++  if (result == SQLITE_DONE) return 0;
++  if (result != SQLITE_ROW) {
++    Log.error("Looking up cache key failed: {}", sqlite3_errmsg(db));
++    return 0;
++  }
++  const auto signedSize = sqlite3_column_int64(load_stmt, 1);
++  if (signedSize <= 0) return 0;
++  const size_t size = static_cast<size_t>(signedSize);
++  if ((value && valueSize != size) || (!value && !read_cache.accepts(keySize, size))) return size;
++  const auto* stored = sqlite3_column_blob(load_stmt, 0);
++  const auto storedSize = static_cast<size_t>(sqlite3_column_bytes(load_stmt, 0));
++  return load(size, stored, storedSize, sqlite3_column_int(load_stmt, 2) != 0);
++}
++
++size_t load_from_cache(const void* key, size_t keySize, void* value, size_t valueSize, void*) {
++  const auto waiting = std::chrono::steady_clock::now();
++  std::lock_guard lock(cache_mutex);
++  const auto start = std::chrono::steady_clock::now();
++  const size_t result = load_blob_locked(key, keySize, value, valueSize);
++  const auto now = std::chrono::steady_clock::now();
++  s_blobLockNs += std::chrono::duration_cast<std::chrono::nanoseconds>(start - waiting).count();
++  s_blobLookupNs += std::chrono::duration_cast<std::chrono::nanoseconds>(now - start).count();
++  ++s_blobLookupCount;
++  if (!value) {
++    if (result) { ++s_blobHits; s_blobHitKb += result / 1024; }
++    else ++s_blobMisses;
++  }
++  if (s_blobStatPrev.time_since_epoch().count() == 0) s_blobStatPrev = now;
++  if (now - s_blobStatPrev >= std::chrono::seconds(2)) {
++    Log.info("BLOBCACHE hits {} misses {} hit_kb {} lookups {} avg_lookup_ms {:.2f} over {}ms "
++             "ram_hits {} sql_reads {} ram_kb {} evictions {} avg_lock_ms {:.2f}",
++             s_blobHits, s_blobMisses, s_blobHitKb, s_blobLookupCount,
++             (s_blobLookupNs / 1e6) / s_blobLookupCount,
++             std::chrono::duration_cast<std::chrono::milliseconds>(now - s_blobStatPrev).count(),
++             s_blobRamHits, s_blobSqlReads, read_cache.bytes() / 1024, read_cache.evictions(),
++             (s_blobLockNs / 1e6) / s_blobLookupCount);
++    s_blobHits = s_blobMisses = s_blobHitKb = s_blobLookupNs = s_blobLookupCount = s_blobLockNs = 0;
++    s_blobRamHits = s_blobSqlReads = 0;
++    s_blobStatPrev = now;
++  }
++  return result;
++}
++#else
 +// BLOBCACHE diagnostics. Dawn queries each blob's size (value==nullptr) before
 +// reading, so counting those size queries counts each lookup exactly once. A
 +// low hit rate means the persisted shader blobs are not being reused and every
 +// pipeline recompiles from source (~100ms each on NVK) -- which is the whole
 +// reason background pre-warm is slow and hitchy. All access is under cache_mutex.
 +static uint64_t s_blobHits = 0, s_blobMisses = 0, s_blobHitKb = 0, s_blobMissKb = 0;
++// Wall time spent inside load_from_cache (SQLite SELECT + decompress, under the
++// global cache_mutex). If this dominates vkCreateGraphicsPipeline's ~150 ms then
++// warmup is bound by SD/SQLite blob-cache I/O, not NVK codegen -- and an in-memory
++// blob cache would fix it. All access is under cache_mutex.
++static uint64_t s_blobLookupNs = 0, s_blobLookupCount = 0;
 +static std::chrono::steady_clock::time_point s_blobStatPrev{};
 +static void note_blob_lookup(bool hit, size_t bytes) {
 +  if (hit) {
@@ -218,20 +363,33 @@ diff --git a/lib/webgpu/gpu_cache.cpp b/lib/webgpu/gpu_cache.cpp
 +    return;
 +  }
 +  if (now - s_blobStatPrev >= std::chrono::seconds(2)) {
-+    Log.info("BLOBCACHE hits {} misses {} hit_kb {} over {}ms", s_blobHits, s_blobMisses, s_blobHitKb,
++    Log.info("BLOBCACHE hits {} misses {} hit_kb {} lookups {} avg_lookup_ms {:.2f} over {}ms", s_blobHits,
++             s_blobMisses, s_blobHitKb, s_blobLookupCount,
++             s_blobLookupCount ? (s_blobLookupNs / 1e6) / s_blobLookupCount : 0.0,
 +             std::chrono::duration_cast<std::chrono::milliseconds>(now - s_blobStatPrev).count());
 +    s_blobHits = s_blobMisses = s_blobHitKb = s_blobMissKb = 0;
++    s_blobLookupNs = s_blobLookupCount = 0;
 +    s_blobStatPrev = now;
 +  }
-+}
-+
+ }
+ 
  size_t load_from_cache(void const* key, size_t keySize, void* value, size_t valueSize, void*) {
    std::lock_guard lock(cache_mutex);
++  // Accumulate wall time of this lookup (destructs before the lock releases, so
++  // the shared counters stay under cache_mutex). See s_blobLookupNs.
++  struct LookupTimer {
++    std::chrono::steady_clock::time_point start;
++    ~LookupTimer() {
++      s_blobLookupNs +=
++          std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count();
++      ++s_blobLookupCount;
++    }
++  } lookupTimer{std::chrono::steady_clock::now()};
  
-@@ -227,13 +379,42 @@ size_t load_from_cache(void const* key, size_t keySize, void* value, size_t valu
+   if (!cache_init()) {
      return 0;
-   }
- 
++  }
++
 +  const auto keyHash = XXH128(key, keySize, 0);
 +
 +  // Not yet committed, but just as valid as a row. Dawn queries size with a
@@ -260,11 +418,10 @@ diff --git a/lib/webgpu/gpu_cache.cpp b/lib/webgpu/gpu_cache.cpp
 +    }
 +    cache_keys_used.push_back(keyHash);
 +    return foundSize;
-+  }
-+
+   }
+ 
    sqlite::Transaction tx(db, Log);
-   if (!tx) {
-     Log.error("Failed to open load transaction");
+@@ -233,7 +553,6 @@
      return 0;
    }
  
@@ -272,7 +429,7 @@ diff --git a/lib/webgpu/gpu_cache.cpp b/lib/webgpu/gpu_cache.cpp
    check(sqlite3_bind_blob(load_stmt, 1, &keyHash, sizeof(keyHash), SQLITE_TRANSIENT));
  
    const auto ret = sqlite3_step(load_stmt);
-@@ -289,6 +470,10 @@ size_t load_from_cache(void const* key, size_t keySize, void* value, size_t valu
+@@ -289,8 +608,14 @@
      cache_keys_used.push_back(keyHash);
    }
  
@@ -282,8 +439,12 @@ diff --git a/lib/webgpu/gpu_cache.cpp b/lib/webgpu/gpu_cache.cpp
 +
    return foundSize;
  }
++
++#endif
  
-@@ -299,14 +484,8 @@ void store_to_cache(void const* key, size_t keySize, void const* value, size_t v
+ void store_to_cache(void const* key, size_t keySize, void const* value, size_t valueSize, void*) {
+   std::lock_guard lock(cache_mutex);
+@@ -299,14 +624,8 @@
      return;
    }
  
@@ -299,7 +460,7 @@ diff --git a/lib/webgpu/gpu_cache.cpp b/lib/webgpu/gpu_cache.cpp
    int compressed = 0;
  #if defined(AURORA_CACHE_USE_ZSTD)
    const auto bound = ZSTD_compressBound(valueSize);
-@@ -333,25 +512,24 @@ void store_to_cache(void const* key, size_t keySize, void const* value, size_t v
+@@ -333,32 +652,41 @@
  #endif
  
    const auto keyHash = XXH128(key, keySize, 0);
@@ -315,12 +476,17 @@ diff --git a/lib/webgpu/gpu_cache.cpp b/lib/webgpu/gpu_cache.cpp
 -    Log.error("Failed to insert row: {}", sqlite3_errmsg(db));
 -    return;
 -  }
- 
+-
 -  check(sqlite3_reset(store_stmt));
 -  check(sqlite3_bind_null(store_stmt, 2));
 -  check(sqlite3_bind_null(store_stmt, 4));
 -
 -  tx.commit();
++
++#if defined(__SWITCH__)
++  read_cache.invalidate(keyHash.low64, keyHash.high64);
++#endif
++
 +  // Buffered, not committed -- see PendingCacheWrite. The copy is unavoidable
 +  // because compress_buffer is reused by the next call and Dawn's `value` is
 +  // only valid for the duration of this callback.
@@ -341,7 +507,10 @@ diff --git a/lib/webgpu/gpu_cache.cpp b/lib/webgpu/gpu_cache.cpp
  }
  
  void cache_prune() {
-@@ -359,6 +537,9 @@ void cache_prune() {
+   std::lock_guard lock(cache_mutex);
++#if defined(__SWITCH__)
++  read_cache.clear();
++#endif
    if (!cache_init()) {
      return;
    }
@@ -351,12 +520,15 @@ diff --git a/lib/webgpu/gpu_cache.cpp b/lib/webgpu/gpu_cache.cpp
    if (cache_keys_used.empty()) {
      Log.warn("Skipping Dawn cache prune because no cache keys were used");
      return;
-@@ -418,6 +599,10 @@ void cache_prune() {
+@@ -418,6 +746,13 @@
  }
  
  void cache_shutdown() {
 +  {
 +    std::lock_guard lock(cache_mutex);
++#if defined(__SWITCH__)
++    read_cache.clear();
++#endif
 +    flush_pending_writes_locked();
 +  }
  #if defined(AURORA_CACHE_USE_ZSTD)

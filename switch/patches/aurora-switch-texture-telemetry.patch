@@ -9,7 +9,146 @@ diff --git a/lib/gx/texture.cpp b/lib/gx/texture.cpp
  #include <cstddef>
  #include <cstdint>
  #include <cstring>
-@@ -699,7 +700,29 @@ gfx::TextureHandle resolve_static_palette_texture(const GXTexObj_& obj, const GX
+@@ -51,6 +52,17 @@
+   u32 tlutDataVersion = 0;
+   uint64_t replacementId = 0;
+   uint64_t lastUsedFrame = 0;
++  // Identity of the source this handle was built from. texObjId is now a stable
++  // descriptor hash (GXTexture.cpp), so a hit must re-verify these to be immune
++  // to a hash collision, plus a cheap content signature to catch an in-place
++  // content change under a reused pointer (GXInvalidateTexAll is a no-op so
++  // nothing else signals it -- e.g. a THP video plane).
++  const void* dataPtr = nullptr;
++  u32 width = 0;
++  u32 height = 0;
++  u32 format = 0;
++  uint64_t quickSig = 0;
++  uint64_t tlutQuickSig = 0;
+ };
+ 
+ struct CachedTlutTextureEntry {
+@@ -194,8 +206,35 @@
+   clear_texture_dependency(texObjId, entry.tlutObjId, entry.replacementId);
+ }
+ 
++// Cheap bounded content signature: samples ~1 KB regardless of texture size so
++// the per-frame object-cache hit path can detect an in-place content change
++// (e.g. a THP video plane re-decoded into the same buffer) without hashing the
++// whole texture. A real image mutation changes at least one of the spread
++// samples; a false match on genuinely different content is astronomically
++// unlikely. Cost is a few hundred bytes of XXH3 per bind vs. multiple MB before.
++uint64_t quick_texture_sig(const void* data, size_t size) noexcept {
++  if (data == nullptr || size == 0) {
++    return 0;
++  }
++  if (size <= 1024) {
++    return XXH3_64bits(data, size);
++  }
++  const auto* p = static_cast<const uint8_t*>(data);
++  const uint64_t parts[6] = {
++      static_cast<uint64_t>(size),          XXH3_64bits(p, 256),
++      XXH3_64bits(p + size / 4, 256),       XXH3_64bits(p + size / 2, 256),
++      XXH3_64bits(p + (size * 3) / 4, 256), XXH3_64bits(p + size - 256, 256),
++  };
++  return XXH3_64bits(parts, sizeof(parts));
++}
++
++uint64_t quick_texture_sig(const GXTexObj_& obj) noexcept {
++  return quick_texture_sig(obj.data,
++                           texture::texture_source_size(obj.format(), obj.width(), obj.height(), obj.mip_count()));
++}
++
+ void store_cached_texture(const GXTexObj_& obj, gfx::TextureHandle handle, u32 tlutObjId = 0, u32 tlutDataVersion = 0,
+-                          uint64_t replacementId = 0) {
++                          uint64_t replacementId = 0, uint64_t tlutSig = 0) {
+   if (obj.texObjId == 0) {
+     return;
+   }
+@@ -211,6 +250,12 @@
+   entry.tlutDataVersion = tlutDataVersion;
+   entry.replacementId = replacementId;
+   entry.lastUsedFrame = s_frameCount;
++  entry.dataPtr = obj.data;
++  entry.width = obj.width();
++  entry.height = obj.height();
++  entry.format = obj.format();
++  entry.quickSig = quick_texture_sig(obj);
++  entry.tlutQuickSig = tlutSig;
+ 
+   if (tlutObjId != 0) {
+     auto& cache = s_tlutObjectCaches[tlutObjId];
+@@ -598,7 +643,9 @@
+   if (obj.texObjId != 0) {
+     if (const auto it = s_textureObjectCaches.find(obj.texObjId); it != s_textureObjectCaches.end()) {
+       auto& entry = it->second;
+-      if (entry.handle && entry.texDataVersion == obj.texDataVersion && entry.tlutObjId == 0) {
++      if (entry.handle && entry.texDataVersion == obj.texDataVersion && entry.tlutObjId == 0 &&
++          entry.dataPtr == obj.data && entry.width == obj.width() && entry.height == obj.height() &&
++          entry.format == obj.format() && entry.quickSig == quick_texture_sig(obj)) {
+         entry.lastUsedFrame = s_frameCount;
+         ++s_stats.objectHits;
+         return entry.handle;
+@@ -620,7 +667,11 @@
+     if (!keys.has_value()) {
+       keys = hash_texture_source(obj, nullptr, BuildSourceKeyForDebug);
+     }
+-    handle = find_content_texture(keys->contentKey);
++    // Dynamic (no_cache) textures re-decode fresh content into the same buffer
++    // every frame, so the content cache would never usefully hit and would just
++    // churn thousands of dead entries, evicting hot static textures. Skip it and
++    // always upload the current contents.
++    handle = obj.no_cache() ? gfx::TextureHandle{} : find_content_texture(keys->contentKey);
+     if (!handle) {
+ #if DEBUG
+       const auto name = gfx::texture_replacement::build_texture_replacement_name(*keys->sourceKey);
+@@ -633,7 +684,9 @@
+                                           {static_cast<const uint8_t*>(obj.data), sourceBytes}, false, nameStr);
+       ++s_stats.misses;
+       s_stats.uploadBytes += texture_handle_size(handle);
+-      cache_content_texture(std::move(keys->contentKey), handle);
++      if (!obj.no_cache()) {
++        cache_content_texture(std::move(keys->contentKey), handle);
++      }
+     }
+   }
+   if (!obj.no_cache()) {
+@@ -649,7 +702,10 @@
+     if (const auto it = s_textureObjectCaches.find(obj.texObjId); it != s_textureObjectCaches.end()) {
+       auto& entry = it->second;
+       if (entry.handle && entry.texDataVersion == obj.texDataVersion && entry.tlutObjId == tlut.tlutObjId &&
+-          entry.tlutDataVersion == tlut.tlutDataVersion) {
++          entry.tlutDataVersion == tlut.tlutDataVersion && entry.dataPtr == obj.data &&
++          entry.width == obj.width() && entry.height == obj.height() && entry.format == obj.format() &&
++          entry.quickSig == quick_texture_sig(obj) &&
++          entry.tlutQuickSig == quick_texture_sig(tlut.data, tlut_source_size(tlut.numEntries))) {
+         entry.lastUsedFrame = s_frameCount;
+         if (auto tlutIt = s_tlutObjectCaches.find(tlut.tlutObjId); tlutIt != s_tlutObjectCaches.end()) {
+           tlutIt->second.lastUsedFrame = s_frameCount;
+@@ -673,7 +729,7 @@
+     if (!keys.has_value()) {
+       keys = hash_texture_source(obj, &tlut, false);
+     }
+-    handle = find_content_texture(keys->contentKey);
++    handle = (obj.no_cache() || tlut.no_cache()) ? gfx::TextureHandle{} : find_content_texture(keys->contentKey);
+     if (!handle) {
+       const size_t textureBytes = texture_source_size(obj.format(), obj.width(), obj.height(), obj.mip_count());
+       const size_t tlutBytes = tlut_source_size(tlut.numEntries);
+@@ -689,17 +745,42 @@
+       handle->hasArbitraryMips = converted.hasArbitraryMips;
+       ++s_stats.misses;
+       s_stats.uploadBytes += texture_handle_size(handle);
+-      cache_content_texture(std::move(keys->contentKey), handle);
++      if (!obj.no_cache() && !tlut.no_cache()) {
++        cache_content_texture(std::move(keys->contentKey), handle);
++      }
+     }
+   }
+   if (!obj.no_cache() && !tlut.no_cache()) {
+-    store_cached_texture(obj, handle, tlut.tlutObjId, tlut.tlutDataVersion, replacementId);
++    store_cached_texture(obj, handle, tlut.tlutObjId, tlut.tlutDataVersion, replacementId,
++                         quick_texture_sig(tlut.data, tlut_source_size(tlut.numEntries)));
+   }
+   return handle;
  }
  
  void end_frame() noexcept {
@@ -39,7 +178,7 @@ diff --git a/lib/gx/texture.cpp b/lib/gx/texture.cpp
    s_stats.pendingLoads = streamingStats.pendingLoads;
    s_stats.publishes = streamingStats.publishes;
    s_stats.publishBytes = streamingStats.publishBytes;
-@@ -721,7 +744,22 @@ void end_frame() noexcept {
+@@ -721,7 +802,22 @@
    s_stats.publishBytes = streamingStats.publishBytes;
    ++s_frameCount;
    apply_pending_invalidations();
@@ -62,3 +201,18 @@ diff --git a/lib/gx/texture.cpp b/lib/gx/texture.cpp
  }
  
  void shutdown() noexcept {
+@@ -845,7 +941,13 @@
+ 
+     GXTexObj_ obj = g_gxState.loadedTextures[i];
+     auto& textureBind = g_gxState.textures[i];
+-    if (textureBind.generation == s_bindGeneration && obj.texObjId != 0 &&
++    // no_cache textures are dynamic (THP video re-decodes new content into the
++    // same buffer each frame). Their stable texObjId + constant texDataVersion
++    // make the identity check below match every frame, so without this guard the
++    // previously-bound (stale) handle is reused and the video freezes on its
++    // first frame. Always fall through to re-resolve them. (With the old
++    // monotonic texObjId this never triggered because the id changed each frame.)
++    if (!obj.no_cache() && textureBind.generation == s_bindGeneration && obj.texObjId != 0 &&
+         obj.texObjId == textureBind.texObj.texObjId && obj.texDataVersion == textureBind.texObj.texDataVersion) {
+       touch_bound_texture(obj);
+       continue;

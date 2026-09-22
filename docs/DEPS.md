@@ -29,7 +29,7 @@ git submodule update --init --recursive third_party/abseil-cpp
 
 If you have KartPad-NX checked out, you can copy its `ref/dawn` directly:
 ```powershell
-robocopy C:\Users\Bunga\Documents\GitHub\KartPad-NX\ref\dawn ref\dawn /E /XD .git
+robocopy E:\Code Projects\GitHub\KartPad-NX\ref\dawn ref\dawn /E /XD .git
 # Then re-init the git metadata if you want patch idempotency checks:
 git -C ref/dawn init && git -C ref/dawn add -A && git -C ref/dawn commit -m "import"
 ```
@@ -37,10 +37,10 @@ git -C ref/dawn init && git -C ref/dawn add -A && git -C ref/dawn commit -m "imp
 ## ref/SDL — SDL3 with Switch external-graphics patch
 
 The currently built fallback tree has SDL headers **3.4.4** and uses the
-KartPad-NX external-graphics patch. The requested Dusklight migration targets a
+KartPad-NX external-graphics patch. The selected Dusklight backend uses a
 separate pinned **SDL release-3.4.10** tree plus Dusklight patch SHA-256
 `61327a8d285880bf4dbf08a7071694f761aa208d00ac6d73160f531697409fcd`.
-Do not overwrite `ref/SDL`; acquire the migration candidate as
+Do not overwrite `ref/SDL`; keep the selected backend as
 `ref/SDL-dusklight` so the known-build fallback remains available.
 
 ```bash
@@ -50,7 +50,7 @@ git clone https://github.com/libsdl-org/SDL ref/SDL
 
 Or copy from KartPad-NX:
 ```powershell
-robocopy C:\Users\Bunga\Documents\GitHub\KartPad-NX\ref\SDL ref\SDL /E /XD .git
+robocopy "E:\Code Projects\GitHub\KartPad-NX\ref\SDL" ref\SDL /E /XD .git
 ```
 
 ## Docker image
@@ -98,7 +98,7 @@ KartPad-NX already has this working: `switch/overlays/mesa-switch/` there
 builds it via its own `devkitpro-mesa-rust` Docker image
 (`switch/overlays/mesa-switch/Docker.rust` + `build-switch.sh`), and — on this
 dev machine — the result is already built at
-`C:\Users\Bunga\Documents\GitHub\KartPad-NX\ref\mesa-switch-main\builddir-switch`
+`E:\Code Projects\GitHub\KartPad-NX\ref\mesa-switch-main\builddir-switch`
 (confirmed present: `libnvk.a`, `libvulkan.a`, and the rest of the NVK/NAK/NIL
 archive set, ~436 MB total). melee-nx reuses that prebuilt tree directly rather
 than reproducing the whole Rust/Meson pipeline a second time:
@@ -108,7 +108,7 @@ than reproducing the whole Rust/Meson pipeline a second time:
 # this repo, when running any builder/*.sh script in the kartpad-dawn container:
 docker run --rm \
   -v /path/to/melee-nx:/project \
-  -v "/c/Users/Bunga/Documents/GitHub/KartPad-NX/ref/mesa-switch-main:/mesa-nvk:ro" \
+  -v "/e/Code Projects/GitHub/KartPad-NX/ref/mesa-switch-main:/mesa-nvk:ro" \
   -w /project kartpad-dawn:latest bash builder/build-melee.sh configure
 ```
 
@@ -127,8 +127,7 @@ The staged sequence (the `docker.sh` wrapper runs these inside the container):
 ```bash
 bash builder/build-graphics.sh prepare
 bash builder/build-graphics.sh sdl      # only when the SDL source/variant changed
-bash builder/build-melee.sh configure
-bash builder/build-melee.sh build
+bash builder/build-melee.sh all
 ```
 
 ### SDL variant
@@ -174,3 +173,16 @@ Never edit a `builder/*.sh` script while a container is running it: bash reads
 the file by byte offset as it goes, so rewriting it derails the rest of the run
 (observed 2026-09-19 — the build itself completed, the wrapper then died on a
 phantom syntax error).
+
+## September 21 donor audit and local path
+
+Audited Dusklight-NX `63f8d2ba45431091a4dfb6bbd48dd32ff0a9339d` and its
+Aurora submodule `6d9f9d9fe8952aada5274154645610042d0a036e` for effective
+pipeline reuse and shader-analysis caching. Melee retains its pinned Aurora
+base; selected techniques are adapted through file-disjoint patches.
+
+The actual local Mesa root is now
+`E:/Code Projects/GitHub/KartPad-NX/ref/mesa-switch-main`. The old C: directory
+is incomplete. Quote this path when setting `MESA_NVK_ROOT`. See
+[HANDOFF-2026-09-21-GX-CPU.md](HANDOFF-2026-09-21-GX-CPU.md) for the tested
+artifact, provenance, and outstanding work.

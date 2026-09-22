@@ -36,7 +36,7 @@ bash builder/fetch-deps.sh
 Then get a Mesa/NVK tree (see [below](#mesanvk)) and point at it:
 
 ```bash
-export MESA_NVK_ROOT=/path/to/mesa-switch-main
+export MESA_NVK_ROOT="/path/to/mesa-switch-main"
 ```
 
 Then build:
@@ -102,6 +102,11 @@ export MESA_NVK_ROOT=/path/to/Kartpad-NX/ref/mesa-switch-main
 If you already have KartPad-NX checked out and built, you are done — just export
 the path; nothing needs to be rebuilt or copied.
 
+Quote the path if it contains spaces. Point to the complete built tree, not an
+old checkout location left behind after moving the project. The wrapper checks
+for `src/nouveau/vulkan/rust_switch_stubs.c` and `builddir-switch/`; linking also
+requires the archives inside that build directory.
+
 **Honest status:** vendoring this into melee-nx so it builds with one command is
 open work. Right now it is a cross-repo dependency, and that is the main thing
 standing between this project and a genuine one-command build.
@@ -129,7 +134,9 @@ bash builder/docker.sh melee build
 
 Re-run `graphics prepare` and `melee all` after pulling patch changes. Rebuild
 SDL or Dawn as well when patches change their sources. For a source audit, run
-`python builder/verify-patches.py` (Python 3 required on the host).
+`python builder/verify-patches.py` (Python 3 required on the host). The September
+21 patch set covers the current GX CPU optimizations and previously uncaptured
+card/texture/movie fixes; there is no need to bypass a failed patch check.
 
 ### Why two compilers
 
@@ -146,7 +153,7 @@ devkitPro's bundled Clang is not. So: GCC for C, Clang 19 for C++. See
 
 | Value | Tree | Notes |
 |---|---|---|
-| `dusklight` (default) | `ref/SDL-dusklight` — SDL 3.4.10 + Dusklight Switch backend | Current default; best-performing build |
+| `dusklight` (default) | `ref/SDL-dusklight` — SDL 3.4.10 + Dusklight Switch backend | Current default; used by the September 21 hardware-tested build |
 | `legacy` | `ref/SDL` — SDL 3.4.4 | Comparison/fallback tree |
 
 It must match between `graphics` and `melee` stages, so set it once:

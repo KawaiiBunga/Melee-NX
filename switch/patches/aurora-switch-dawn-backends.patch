@@ -20,7 +20,15 @@ diff --git a/cmake/AuroraDawnProvider.cmake b/cmake/AuroraDawnProvider.cmake
 diff --git a/lib/webgpu/gpu.cpp b/lib/webgpu/gpu.cpp
 --- a/lib/webgpu/gpu.cpp
 +++ b/lib/webgpu/gpu.cpp
-@@ -268,6 +268,13 @@
+@@ -5,6 +5,7 @@
+ #include <array>
+ #include <cmath>
+ #include <cstdint>
++#include <cstdlib>
+ #include <span>
+ #include <string>
+ #include <string_view>
+@@ -268,6 +269,13 @@
      }
      return false;
    };
@@ -34,3 +42,29 @@ diff --git a/lib/webgpu/gpu.cpp b/lib/webgpu/gpu.cpp
    if (vsync_enabled()) {
      if (supports(wgpu::PresentMode::FifoRelaxed)) {
        return wgpu::PresentMode::FifoRelaxed;
+@@ -962,7 +970,7 @@
+           store_to_cache(key.data(), key.size(), value.data(), value.size(), nullptr);
+         });
+ 
+-    constexpr std::array enableToggles{
++    std::vector<const char*> enableToggles{
+ #if _WIN32
+         "use_dxc",
+ #ifndef NDEBUG
+@@ -981,6 +989,16 @@
+         "enable_immediate_error_handling",
+         "gl_allow_context_on_multi_threads",
+     };
++    // Opt-in (perf.cfg: monolithic_cache 1 -> AURORA_MONOLITHIC_PIPELINE_CACHE=1).
++    // Share ONE VkPipelineCache across every pipeline instead of one per pipeline,
++    // so NVK/NAK can skip re-running shader codegen for a program reused across the
++    // ~7000 state-permutation pipelines (each vkCreateGraphicsPipeline measured at
++    // ~150 ms even with the per-pipeline cache warm). Off by default; the shipped
++    // per-pipeline cache path is unchanged unless the knob is set.
++    if (const char* m = std::getenv("AURORA_MONOLITHIC_PIPELINE_CACHE"); m != nullptr && m[0] == '1') {
++        enableToggles.push_back("vulkan_monolithic_pipeline_cache");
++        Log.info("Monolithic Vulkan pipeline cache enabled (monolithic_cache 1)");
++    }
+     constexpr std::array disableToggles{
+         "timestamp_quantization",
+     };

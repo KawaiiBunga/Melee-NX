@@ -39,7 +39,7 @@ diff --git a/lib/aurora.cpp b/lib/aurora.cpp
    auto imguiDrawData = imgui::freeze();
  
    const auto& presentSource = webgpu::present_source();
-@@ -288,6 +308,9 @@
+@@ -288,9 +308,23 @@
    }
  #endif
  
@@ -49,7 +49,31 @@ diff --git a/lib/aurora.cpp b/lib/aurora.cpp
    gfx::end_frame([rmlBindGroup = std::move(rmlBindGroup), rmlOverlay, viewport,
                    imguiDrawData = std::move(imguiDrawData)](
                       wgpu::CommandEncoder& encoder, std::vector<gfx::AfterSubmitCallback> afterSubmitCallbacks) {
-@@ -357,26 +380,11 @@
++#if defined(__SWITCH__)
++    using RenderClock = std::chrono::steady_clock;
++    static uint64_t renderNs[4]{};
++    static unsigned renderFrames = 0;
++    auto renderStart = RenderClock::now();
++    const auto renderStep = [&](unsigned stage) {
++      const auto now = RenderClock::now();
++      renderNs[stage] += std::chrono::duration_cast<std::chrono::nanoseconds>(now - renderStart).count();
++      renderStart = now;
++    };
++#endif
+     wgpu::Texture currentTexture;
+     wgpu::TextureView currentView;
+     auto surfaceStatus = wgpu::SurfaceGetCurrentTextureStatus::Error;
+@@ -317,6 +351,9 @@
+       }
+     }
+ 
++#if defined(__SWITCH__)
++    renderStep(0);
++#endif
+     const bool canPresent = currentTexture && currentView &&
+                             webgpu::g_graphicsConfig.surfaceConfiguration.width > 0 &&
+                             webgpu::g_graphicsConfig.surfaceConfiguration.height > 0;
+@@ -357,26 +394,11 @@
            pass.SetBindGroup(0, rmlBindGroup, 0, nullptr);
            pass.Draw(3);
          }
@@ -81,7 +105,20 @@ diff --git a/lib/aurora.cpp b/lib/aurora.cpp
          pass.End();
        }
      } else {
-@@ -392,14 +400,17 @@
+@@ -385,21 +407,30 @@
+     webgpu::gpu_prof::frame_end(encoder);
+     const wgpu::CommandBufferDescriptor cmdBufDescriptor{.label = "Redraw command buffer"};
+     const auto buffer = encoder.Finish(&cmdBufDescriptor);
++#if defined(__SWITCH__)
++    renderStep(1);
++#endif
+     {
+       ZoneScopedN("Queue Submit");
+       g_queue.Submit(1, &buffer);
+     }
++#if defined(__SWITCH__)
++    renderStep(2);
++#endif
      webgpu::gpu_prof::after_submit();
      if (canPresent && g_surface) {
        ZoneScopedN("Present");
@@ -101,7 +138,24 @@ diff --git a/lib/aurora.cpp b/lib/aurora.cpp
          gfx::after_present();
          /* Only on the transition into suboptimal: refresh_surface() calls
           * gpu_synchronize(), so asking every frame would stall the pipeline
-@@ -465,6 +476,9 @@
+@@ -441,6 +472,16 @@
+         break;
+       }
+     }
++#if defined(__SWITCH__)
++    renderStep(3);
++    if (++renderFrames == 120) {
++      Log.info("RENDERSTAGES frames {} acquire_ms {:.3f} finalize_ms {:.3f} submit_ms {:.3f} present_ms {:.3f}",
++               renderFrames, renderNs[0] / 1e6 / renderFrames, renderNs[1] / 1e6 / renderFrames,
++               renderNs[2] / 1e6 / renderFrames, renderNs[3] / 1e6 / renderFrames);
++      for (auto& ns : renderNs) ns = 0;
++      renderFrames = 0;
++    }
++#endif
+     for (auto& callback : afterSubmitCallbacks) {
+       if (callback) {
+         callback();
+@@ -465,6 +506,9 @@
      TracyPlot("aurora: lastStorageSize", static_cast<int64_t>(stats.lastStorageSize));
      TracyPlot("aurora: lastTextureUploadSize", static_cast<int64_t>(stats.lastTextureUploadSize));
    });
@@ -111,7 +165,7 @@ diff --git a/lib/aurora.cpp b/lib/aurora.cpp
  
  #endif
  }
-@@ -506,5 +520,13 @@
+@@ -506,5 +550,13 @@
    (void)preserve;
  #endif
  }
