@@ -1,4 +1,5 @@
 diff --git a/src/pc/main.c b/src/pc/main.c
+index 0954e60..e3e1a79 100644
 --- a/src/pc/main.c
 +++ b/src/pc/main.c
 @@ -22,6 +22,9 @@
@@ -11,7 +12,7 @@ diff --git a/src/pc/main.c b/src/pc/main.c
  
  int melee_main(void);
  
-@@ -54,12 +57,16 @@
+@@ -54,12 +57,16 @@ static FILE* log_file(void) {
  /* Milliseconds since the first log record. Without a time base there is no
   * way to line a frame stall up against what the engine was loading. */
  static double log_now_ms(void) {
@@ -28,7 +29,7 @@ diff --git a/src/pc/main.c b/src/pc/main.c
  }
  
  void pc_log_line(const char* fmt, ...) {
-@@ -69,6 +76,17 @@
+@@ -69,6 +76,17 @@ void pc_log_line(const char* fmt, ...) {
      vsnprintf(msg, sizeof(msg), fmt, ap);
      va_end(ap);
      const double t = log_now_ms();
@@ -46,14 +47,13 @@ diff --git a/src/pc/main.c b/src/pc/main.c
      fprintf(stderr, "[%9.3f] %s\n", t, msg);
      fflush(stderr);
      FILE* lf = log_file();
-@@ -76,11 +94,33 @@
+@@ -76,11 +94,33 @@ void pc_log_line(const char* fmt, ...) {
          fprintf(lf, "[%9.3f] %s\n", t, msg);
          fflush(lf);
      }
--}
 +#endif
-+}
-+
+ }
+ 
 +#if defined(__SWITCH__)
 +#include <unistd.h>
 +static void switch_log_write(const char* buf, size_t len, bool flush_now) {
@@ -61,7 +61,7 @@ diff --git a/src/pc/main.c b/src/pc/main.c
 +    else melee_nx_log_write(buf, len);
 +}
 +#endif
- 
++
  static void log_callback(
      AuroraLogLevel level, const char* module, const char* message, unsigned int len) {
 -#if defined(__ANDROID__)
@@ -82,7 +82,7 @@ diff --git a/src/pc/main.c b/src/pc/main.c
      int prio = ANDROID_LOG_INFO;
      switch (level) {
      case LOG_DEBUG:
-@@ -275,7 +315,11 @@
+@@ -275,7 +315,11 @@ static AuroraBackend backend_from_env(void) {
      return BACKEND_AUTO;
  }
  
@@ -94,7 +94,7 @@ diff --git a/src/pc/main.c b/src/pc/main.c
  #if defined(_WIN32)
      SetUnhandledExceptionFilter(crash_handler);
  #endif
-@@ -298,12 +342,37 @@
+@@ -298,12 +342,37 @@ MELEE_EXPORT int main(int argc, char* argv[]) {
              usage(argv[0]);
          }
      }
@@ -136,9 +136,10 @@ diff --git a/src/pc/main.c b/src/pc/main.c
          .maxTextureAnisotropy = 16,
          /* MELEE_VSYNC=0 picks Mailbox/Immediate instead of FifoRelaxed; some
 diff --git a/src/pc/os.c b/src/pc/os.c
+index 55cc86c..d1237b0 100644
 --- a/src/pc/os.c
 +++ b/src/pc/os.c
-@@ -322,6 +322,19 @@
+@@ -322,6 +322,19 @@ void* pc_resolve_ext_ptr(uint32_t id) {
      return s_ext_ptrs[id - 1];
  }
  
@@ -158,7 +159,7 @@ diff --git a/src/pc/os.c b/src/pc/os.c
  void pc_disc_ptr_overflow(const void* p, const char* file, int line) {
      fprintf(stderr, "%s:%d: pointer %p does not fit a 32-bit disc slot\n", file, line, p);
      abort();
-@@ -344,9 +357,49 @@
+@@ -344,9 +357,49 @@ void pc_platform_init(void) {
  #include <android/log.h>
  #endif
  
@@ -208,7 +209,7 @@ diff --git a/src/pc/os.c b/src/pc/os.c
  #else
      vfprintf(stdout, msg, list);
      fflush(stdout);
-@@ -367,6 +420,12 @@
+@@ -367,6 +420,12 @@ void OSPanic(const char* file, int line, const char* msg, ...) {
      char buf[1024];
      vsnprintf(buf, sizeof(buf), msg, args);
      __android_log_print(ANDROID_LOG_FATAL, "OSPanic", "PANIC %s:%d: %s", file, line, buf);
@@ -222,6 +223,7 @@ diff --git a/src/pc/os.c b/src/pc/os.c
      fprintf(stderr, "PANIC %s:%d: ", file, line);
      vfprintf(stderr, msg, args);
 diff --git a/src/pc/pc.h b/src/pc/pc.h
+index a21fa7b..29b02b9 100644
 --- a/src/pc/pc.h
 +++ b/src/pc/pc.h
 @@ -3,6 +3,7 @@
@@ -232,7 +234,7 @@ diff --git a/src/pc/pc.h b/src/pc/pc.h
  #include <stdint.h>
  
  #ifdef __cplusplus
-@@ -24,6 +25,10 @@
+@@ -24,6 +25,10 @@ void pc_frame_boundary(void);
   * interleave with aurora's own records and can be attributed to whatever
   * the engine reported around them. */
  void pc_log_line(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -244,6 +246,7 @@ diff --git a/src/pc/pc.h b/src/pc/pc.h
  /* Keyboard -> virtual controller (src/pc/keyboard.c). */
  typedef union SDL_Event SDL_Event;
 diff --git a/src/pc/vi.c b/src/pc/vi.c
+index 2ee5060..d4299fc 100644
 --- a/src/pc/vi.c
 +++ b/src/pc/vi.c
 @@ -19,6 +19,9 @@
@@ -256,11 +259,10 @@ diff --git a/src/pc/vi.c b/src/pc/vi.c
  
  bool pc_exit_requested;
  
-@@ -29,6 +32,54 @@
- static void* s_current_fb;
+@@ -30,6 +33,54 @@ static void* s_current_fb;
  static BOOL s_black;
  static bool s_in_frame;
-+
+ 
 +static u64 s_sim_start_ns;
 +static u64 s_last_sim_ns;
 +static u64 s_last_submit_ns;
@@ -308,10 +310,11 @@ diff --git a/src/pc/vi.c b/src/pc/vi.c
 +    out_stats->wait_ms = s_prof_wait_ms;
 +    out_stats->peak_ms = s_prof_peak_ms;
 +}
- 
++
  void pc_os_run_alarms(void);
  void aurora_heap_check(void);
-@@ -41,22 +92,82 @@
+ 
+@@ -41,22 +92,82 @@ void pc_frame_boundary(void) {
       * Track the outliers instead, plus how far the pacing sleep overshoots
       * its request -- on Windows a coarse timer resolution turns a 5ms wait
       * into ~16ms, which is stutter the frame average never shows. */
@@ -395,7 +398,7 @@ diff --git a/src/pc/vi.c b/src/pc/vi.c
      if (fps_log) {
          u64 now = SDL_GetTicks();
          u64 now_ns = SDL_GetTicksNS();
-@@ -75,28 +186,68 @@
+@@ -75,28 +186,68 @@ void pc_frame_boundary(void) {
              /* Put the stall in the main log too, where it sits next to
               * whatever aurora reported loading at that moment. An average
               * cannot tell a shader compile from a disc read; a timestamped
@@ -460,14 +463,13 @@ diff --git a/src/pc/vi.c b/src/pc/vi.c
              sleep_worst_over_ns = 0;
          }
      }
--
 +    s_last_log_ns = SDL_GetTicksNS() - log_t0;
-+
+ 
 +    u64 pump_t0 = SDL_GetTicksNS();
      const AuroraEvent* event = aurora_update();
      while (event != NULL && event->type != AURORA_NONE) {
          if (event->type == AURORA_EXIT) {
-@@ -110,33 +261,39 @@
+@@ -110,33 +261,39 @@ void pc_frame_boundary(void) {
          }
          ++event;
      }
@@ -514,7 +516,7 @@ diff --git a/src/pc/vi.c b/src/pc/vi.c
                  if (slept > want && slept - want > sleep_worst_over_ns) {
                      sleep_worst_over_ns = slept - want;
                  }
-@@ -144,10 +301,12 @@
+@@ -144,10 +301,12 @@ void pc_frame_boundary(void) {
          }
      }
      next_sim_ns += sim_period;
@@ -527,7 +529,7 @@ diff --git a/src/pc/vi.c b/src/pc/vi.c
      while (!aurora_begin_frame()) {
          event = aurora_update();
          while (event != NULL && event->type != AURORA_NONE) {
-@@ -158,10 +317,18 @@
+@@ -158,10 +317,18 @@ void pc_frame_boundary(void) {
          }
          SDL_Delay(16);
      }
@@ -546,7 +548,7 @@ diff --git a/src/pc/vi.c b/src/pc/vi.c
      if (s_pre_cb) {
          s_pre_cb(s_retrace_count);
      }
-@@ -169,9 +336,16 @@
+@@ -169,9 +336,16 @@ void pc_frame_boundary(void) {
      if (s_post_cb) {
          s_post_cb(s_retrace_count);
      }
@@ -563,7 +565,7 @@ diff --git a/src/pc/vi.c b/src/pc/vi.c
      pc_frame_boundary();
      /* The overlay pauses the game. Melee's whole simulation hangs off this
       * call returning, so keep presenting frames and pumping input here and
-@@ -179,6 +353,7 @@
+@@ -179,6 +353,7 @@ void VIWaitForRetrace(void) {
      while (pc_menu_is_open() && !pc_exit_requested) {
          pc_frame_boundary();
      }

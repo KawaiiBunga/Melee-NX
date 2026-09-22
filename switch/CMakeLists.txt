@@ -153,7 +153,8 @@ string(SHA256 MELEE_NX_PATCHSET_ID "${MELEE_NX_PATCH_MANIFEST}")
 target_compile_definitions(melee PRIVATE
   MELEE_NX_ROOT_REV="${MELEE_NX_ROOT_REV}"
   MELEE_NX_MELEE_PC_REV="${MELEE_NX_MELEE_PC_REV}"
-  MELEE_NX_PATCHSET_ID="${MELEE_NX_PATCHSET_ID}")
+  MELEE_NX_PATCHSET_ID="${MELEE_NX_PATCHSET_ID}"
+  MELEE_APP_VERSION="v0.2.0")
 target_include_directories(melee PRIVATE "${CMAKE_CURRENT_LIST_DIR}/src/game_data")
 target_link_libraries(melee PRIVATE melee_game aurora::main ${MELEE_CRYPTO_LIBS} ${MELEE_NETWORK_LIBS})
 # Rust-vs-newlib ABI bridge (mmap/getauxval/__errno_location/sysconf/execvp/
@@ -256,7 +257,8 @@ add_dependencies(melee launcher_resources)
 nx_generate_nacp(melee.nacp
   NAME "Melee NX"
   AUTHOR "melee-nx"
-  VERSION "0.1.0")
+  VERSION "0.2.0")
 nx_create_nro(melee
   NACP melee.nacp
+  ICON "${CMAKE_CURRENT_LIST_DIR}/icon.jpg"
   ROMFS "${MELEE_PC_ROOT}/resources")

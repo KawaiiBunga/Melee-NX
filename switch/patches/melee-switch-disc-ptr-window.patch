@@ -1,7 +1,8 @@
 diff --git a/src/melee/db/db.h b/src/melee/db/db.h
+index c210b83..e64f39d 100644
 --- a/src/melee/db/db.h
 +++ b/src/melee/db/db.h
-@@ -79,7 +79,7 @@
+@@ -79,7 +79,7 @@ typedef enum DbLKind {
  /* 4D6B24 */ extern DiscU32* db_submotion_names; ///< char*[] on disc
  /* 4D6B28 */ extern DiscU32* db_motionstate_names; ///< char*[] on disc
  /* 4D6B2C */ extern DiscU32* db_bonus_names;       ///< char*[] on disc
@@ -11,9 +12,10 @@ diff --git a/src/melee/db/db.h b/src/melee/db/db.h
  /* 4D6B80 */ extern int db_MiscVisualEffectsStatus;
  
 diff --git a/src/melee/ft/fighter.c b/src/melee/ft/fighter.c
+index 1758848..67456cb 100644
 --- a/src/melee/ft/fighter.c
 +++ b/src/melee/ft/fighter.c
-@@ -1304,7 +1304,7 @@
+@@ -1304,7 +1304,7 @@ void Fighter_ChangeMotionState(Fighter_GObj* gobj, FtMotionId msid,
                  ftAnim_8006E9B4(gobj);
                  {
                      FighterPartsTable* parts =
@@ -23,9 +25,10 @@ diff --git a/src/melee/ft/fighter.c b/src/melee/ft/fighter.c
                          (u32) bone_index < parts->parts_num &&
                          (*unk_byte_ptr)[0] != 0U)
 diff --git a/src/melee/ft/ftCo_800C7CA0.c b/src/melee/ft/ftCo_800C7CA0.c
+index ad4e31a..d14c868 100644
 --- a/src/melee/ft/ftCo_800C7CA0.c
 +++ b/src/melee/ft/ftCo_800C7CA0.c
-@@ -161,7 +161,7 @@
+@@ -161,7 +161,7 @@ void ft_800C80A4(Fighter* fp)
  {
      size_t i;
      int idx;
@@ -35,9 +38,10 @@ diff --git a/src/melee/ft/ftCo_800C7CA0.c b/src/melee/ft/ftCo_800C7CA0.c
          FighterBone* bone = &fp->parts[idx];
          if (bone->flags_b1) {
 diff --git a/src/melee/ft/ftanim.c b/src/melee/ft/ftanim.c
+index aa5bca9..732043a 100644
 --- a/src/melee/ft/ftanim.c
 +++ b/src/melee/ft/ftanim.c
-@@ -523,7 +523,7 @@
+@@ -523,7 +523,7 @@ bool ftAnim_IsFramesRemaining(Fighter_GObj* gobj)
      Fighter* fp = GET_FIGHTER(gobj);
      int i;
  
@@ -46,7 +50,7 @@ diff --git a/src/melee/ft/ftanim.c b/src/melee/ft/ftanim.c
      if (fp->x8A4_animBlendFrames == 0.0F) {
          for (i = 0; i < parts->parts_num; i++) {
              if (fp->parts[i].flags_b1 && !fp->parts[i].flags_b0 &&
-@@ -562,7 +562,7 @@
+@@ -562,7 +562,7 @@ float ftAnim_8006F3DC(Fighter_GObj* fighter_gobj)
  
      if (fp->x8A4_animBlendFrames == 0.0F) {
          int i;
@@ -55,7 +59,7 @@ diff --git a/src/melee/ft/ftanim.c b/src/melee/ft/ftanim.c
              if (fp->parts[i].flags_b1 && !fp->parts[i].flags_b0 &&
                  !fp->parts[i].flags_b5)
              {
-@@ -937,7 +937,7 @@
+@@ -937,7 +937,7 @@ void ftAnim_8006FE48(Fighter_GObj* fighter_gobj)
  void ftAnim_8006FE9C(Fighter* fp, Fighter_Part start, float t, float t_inv)
  {
      int i;
@@ -64,7 +68,7 @@ diff --git a/src/melee/ft/ftanim.c b/src/melee/ft/ftanim.c
          if (fp->parts[i].flags_b1 && !fp->parts[i].flags_b0 &&
              !fp->parts[i].flags_b5)
          {
-@@ -954,7 +954,7 @@
+@@ -954,7 +954,7 @@ void ftAnim_8006FE9C(Fighter* fp, Fighter_Part start, float t, float t_inv)
  void ftAnim_8006FF74(Fighter* fp, Fighter_Part start)
  {
      int i;
@@ -73,7 +77,7 @@ diff --git a/src/melee/ft/ftanim.c b/src/melee/ft/ftanim.c
          if (fp->parts[i].flags_b1 && !fp->parts[i].flags_b0 &&
              !fp->parts[i].flags_b5)
          {
-@@ -1145,7 +1145,7 @@
+@@ -1145,7 +1145,7 @@ void ftAnim_800707B0(Fighter_GObj* arg0)
      for (i = 0; i < (signed) ARRAY_SIZE(fp->x8B0); i++) {
          temp_r4 = &fp->x8B0[i];
          if (temp_r4->x11 != -1) {
@@ -82,7 +86,7 @@ diff --git a/src/melee/ft/ftanim.c b/src/melee/ft/ftanim.c
              u8* var_r29 = DP(u8, temp_r26->x4);
  
              temp_r4->x8 += temp_r4->xC;
-@@ -1275,16 +1275,16 @@
+@@ -1275,16 +1275,16 @@ void ftAnim_ApplyPartAnim(Fighter_GObj* gobj, s32 arg1, s32 arg2, f32 arg3)
      struct ftData_x1C* temp_r29;
  
      temp_r30 = &fp->x8B0[arg1];
@@ -102,7 +106,7 @@ diff --git a/src/melee/ft/ftanim.c b/src/melee/ft/ftanim.c
  }
  
  void ftAnim_80070C48(Fighter_GObj* gobj, s32 arg1)
-@@ -1325,8 +1325,8 @@
+@@ -1325,8 +1325,8 @@ void ftAnim_80070CC4(Fighter_GObj* gobj, int arg1)
      if (r30->x11 == -1) {
          return;
      }
@@ -113,7 +117,7 @@ diff --git a/src/melee/ft/ftanim.c b/src/melee/ft/ftanim.c
  
      r30->x11 = -1;
      if (fp->x590 != NULL) {
-@@ -1359,7 +1359,7 @@
+@@ -1359,7 +1359,7 @@ void ftAnim_80070F28(HSD_GObj* gobj)
      for (i = 0; i < ARRAY_SIZE(fp->x8B0); i++) {
          struct Fighter_x8B0_t* slot = &fp->x8B0[i];
          if (slot->x11 != -1) {
@@ -123,9 +127,10 @@ diff --git a/src/melee/ft/ftanim.c b/src/melee/ft/ftanim.c
              int j;
  
 diff --git a/src/melee/ft/ftcmdscript.c b/src/melee/ft/ftcmdscript.c
+index 98cd848..fceaf64 100644
 --- a/src/melee/ft/ftcmdscript.c
 +++ b/src/melee/ft/ftcmdscript.c
-@@ -473,7 +473,7 @@
+@@ -473,7 +473,7 @@ void ftCo_800B4778(Fighter* fp, u8 cmd, u8 arg1, u8 arg2)
   */
  void ftCo_800B4880(Fighter* fp, int script_idx)
  {
@@ -135,9 +140,10 @@ diff --git a/src/melee/ft/ftcmdscript.c b/src/melee/ft/ftcmdscript.c
          ftCo_800B463C(fp, *cmd);
          if (*cmd > CpuCmd_OneArgEnd) {
 diff --git a/src/melee/ft/ftcpuattack.c b/src/melee/ft/ftcpuattack.c
+index d95a0bb..d227444 100644
 --- a/src/melee/ft/ftcpuattack.c
 +++ b/src/melee/ft/ftcpuattack.c
-@@ -1817,7 +1817,7 @@
+@@ -1817,7 +1817,7 @@ bool ftCo_800B8A9C(Fighter* fp)
      if (fp->ground_or_air == GA_Air) {
          if (ftCo_800B89CC(fp)) {
              result =
@@ -146,7 +152,7 @@ diff --git a/src/melee/ft/ftcpuattack.c b/src/melee/ft/ftcpuattack.c
              if (result != 0) {
                  cpu->xA4 = result;
                  return true;
-@@ -1839,7 +1839,7 @@
+@@ -1839,7 +1839,7 @@ bool ftCo_800B8A9C(Fighter* fp)
                  tmp->xC8++;
              }
          }
@@ -155,7 +161,7 @@ diff --git a/src/melee/ft/ftcpuattack.c b/src/melee/ft/ftcpuattack.c
          if (result != 0) {
              cpu->xA4 = result;
              return true;
-@@ -1877,7 +1877,7 @@
+@@ -1877,7 +1877,7 @@ bool ftCo_800B8A9C(Fighter* fp)
                  break;
              }
          }
@@ -164,7 +170,7 @@ diff --git a/src/melee/ft/ftcpuattack.c b/src/melee/ft/ftcpuattack.c
                                 weapon_reach);
          if (result != 0) {
              cpu->xA4 = result;
-@@ -1885,7 +1885,7 @@
+@@ -1885,7 +1885,7 @@ bool ftCo_800B8A9C(Fighter* fp)
          }
      }
      if (cpu->level > 5 && ftCo_800B9F6C(target)) {
@@ -173,7 +179,7 @@ diff --git a/src/melee/ft/ftcpuattack.c b/src/melee/ft/ftcpuattack.c
          if (result != 0) {
              cpu->xA4 = result;
              return true;
-@@ -1910,21 +1910,21 @@
+@@ -1910,21 +1910,21 @@ bool ftCo_800B8A9C(Fighter* fp)
          }
      }
      if (var_r0 != 0) {
@@ -198,7 +204,7 @@ diff --git a/src/melee/ft/ftcpuattack.c b/src/melee/ft/ftcpuattack.c
          if (result != 0) {
              cpu->xA4 = result;
              return true;
-@@ -2342,7 +2342,7 @@
+@@ -2342,7 +2342,7 @@ bool ftCo_800B9CBC(Fighter* fp)
          return false;
      }
      if (temp_f31 < 0.08726646192371845 && temp_f31 > -0.08726646192371845) {
@@ -208,9 +214,10 @@ diff --git a/src/melee/ft/ftcpuattack.c b/src/melee/ft/ftcpuattack.c
              return true;
          }
 diff --git a/src/melee/ft/ftdata.c b/src/melee/ft/ftdata.c
+index 7229e34..af04d1a 100644
 --- a/src/melee/ft/ftdata.c
 +++ b/src/melee/ft/ftdata.c
-@@ -1764,7 +1764,7 @@
+@@ -1764,7 +1764,7 @@ void ftData_80085CD8(Fighter* fp, Fighter* arg1, int msid)
                          lbArq_80014BD0(temp_r4_2, fp->x59C,
                                         OSRoundUp32B(temp_r3->x8), 0, 0);
                      } else {
@@ -219,7 +226,7 @@ diff --git a/src/melee/ft/ftdata.c b/src/melee/ft/ftdata.c
                      }
                      temp_ret_2 =
                          HSD_ArchiveParse(&sp14, fp->x59C->x0, temp_r3->x8);
-@@ -1777,7 +1777,7 @@
+@@ -1777,7 +1777,7 @@ void ftData_80085CD8(Fighter* fp, Fighter* arg1, int msid)
              } else {
                  fp->x590 = NULL;
              }
@@ -228,7 +235,7 @@ diff --git a/src/melee/ft/ftdata.c b/src/melee/ft/ftdata.c
          }
      }
  }
-@@ -1817,7 +1817,7 @@
+@@ -1817,7 +1817,7 @@ FigaTree* ftData_80085E50(Fighter* arg0, int msid)
                          lbArq_80014BD0(temp_r4_2, arg0->x5A0,
                                         OSRoundUp32B(temp_r3->x8), 0, 0);
                      } else {
@@ -237,7 +244,7 @@ diff --git a/src/melee/ft/ftdata.c b/src/melee/ft/ftdata.c
                      }
                      temp_ret_2 =
                          HSD_ArchiveParse(&sp10, arg0->x5A0->x0, temp_r3->x8);
-@@ -1830,7 +1830,7 @@
+@@ -1830,7 +1830,7 @@ FigaTree* ftData_80085E50(Fighter* arg0, int msid)
              } else {
                  arg0->x598 = 0;
              }
@@ -247,9 +254,10 @@ diff --git a/src/melee/ft/ftdata.c b/src/melee/ft/ftdata.c
          return arg0->x598;
      }
 diff --git a/src/melee/ft/ftlib.c b/src/melee/ft/ftlib.c
+index 67c9ed6..53b4f99 100644
 --- a/src/melee/ft/ftlib.c
 +++ b/src/melee/ft/ftlib.c
-@@ -393,8 +393,7 @@
+@@ -393,8 +393,7 @@ void ftLib_800866DC(HSD_GObj* gobj, Vec3* v)
                       "out=(%g,%g,%g) cur_pos=(%g,%g,%g) box=%p dst=%p\n",
                       (int) fp->player_id, (int) fp->kind, (int) fp->motion_id,
                       fp->x34_scale.y, (int) i,
@@ -260,9 +268,10 @@ diff --git a/src/melee/ft/ftlib.c b/src/melee/ft/ftlib.c
                       bone_world.y, bone_world.z, offset.x, offset.y, offset.z,
                       v->x, v->y, v->z, fp->cur_pos.x, fp->cur_pos.y,
 diff --git a/src/melee/ft/ftmetal.c b/src/melee/ft/ftmetal.c
+index a863d89..6ef2503 100644
 --- a/src/melee/ft/ftmetal.c
 +++ b/src/melee/ft/ftmetal.c
-@@ -21,7 +21,7 @@
+@@ -21,7 +21,7 @@ void ft_800C8170(Fighter* fp)
  
      PAD_STACK(8);
  
@@ -271,7 +280,7 @@ diff --git a/src/melee/ft/ftmetal.c b/src/melee/ft/ftmetal.c
          if (fp->parts[i].flags_b1) {
              FighterBone* bone = &fp->parts[i];
              jobj = bone->joint;
-@@ -81,7 +81,7 @@
+@@ -81,7 +81,7 @@ static inline void enableMetal(Fighter* fp)
      int i;
      HSD_JObj* jobj;
  
@@ -281,6 +290,7 @@ diff --git a/src/melee/ft/ftmetal.c b/src/melee/ft/ftmetal.c
              jobj = fp->parts[i].joint;
              dobj = HSD_JObjGetDObj(jobj);
 diff --git a/src/melee/ft/ftparts.c b/src/melee/ft/ftparts.c
+index cf3399c..32608b9 100644
 --- a/src/melee/ft/ftparts.c
 +++ b/src/melee/ft/ftparts.c
 @@ -18,7 +18,7 @@
@@ -292,7 +302,7 @@ diff --git a/src/melee/ft/ftparts.c b/src/melee/ft/ftparts.c
  }
  #include <sysdolphin/baselib/mtx.h>
  #include <sysdolphin/baselib/perf.h>
-@@ -521,10 +521,10 @@
+@@ -521,10 +521,10 @@ void ftParts_8007487C(FtPartsDesc* desc, FtPartsVis* vis, u32 costume_id,
          HSD_ASSERTREPORT(627, 0, "fighter parts model num over!\n");
      }
  
@@ -307,7 +317,7 @@ diff --git a/src/melee/ft/ftparts.c b/src/melee/ft/ftparts.c
      vis->xC[4] = 0;
      vis->cleared[0] = true;
      vis->cleared[1] = true;
-@@ -756,7 +756,7 @@
+@@ -756,7 +756,7 @@ u32 ftParts_8007506C(enum FighterKind ftkind, int part)
      int i;
      struct Fighter_804D6540_t* temp_r3;
  
@@ -317,9 +327,10 @@ diff --git a/src/melee/ft/ftparts.c b/src/melee/ft/ftparts.c
          var_r3 = DP(struct Fighter_804D6540_x0_t, temp_r3->x0);
          for (i = 0; i < temp_r3->x4; i++, var_r3++) {
 diff --git a/src/melee/gm/gm_1879.c b/src/melee/gm/gm_1879.c
+index 5cbbadb..0d022c5 100644
 --- a/src/melee/gm/gm_1879.c
 +++ b/src/melee/gm/gm_1879.c
-@@ -94,7 +94,7 @@
+@@ -94,7 +94,7 @@ void fn_80187910(HSD_GObj* arg0)
          }
          frame = data->x37.frame_counter * 0x12C;
          HSD_CObjRemoveAnim(cobj);
@@ -328,7 +339,7 @@ diff --git a/src/melee/gm/gm_1879.c b/src/melee/gm/gm_1879.c
          HSD_CObjReqAnim(cobj, (f32) frame);
      }
      HSD_CObjAnim(cobj);
-@@ -314,7 +314,7 @@
+@@ -314,7 +314,7 @@ static inline void gm_80187F48_OnEnter_inline(gm_80187F48_EnterData* arg0)
      HSD_GObjObject_80390A70(gobj, HSD_GObj_CameraKind, cobj);
      GObj_SetupGXLinkMax(gobj, (GObj_RenderFunc) (Event) Camera_800304E0, 8);
      HSD_GObj_SetupProc(gobj, fn_80187910, 0);
@@ -338,9 +349,10 @@ diff --git a/src/melee/gm/gm_1879.c b/src/melee/gm/gm_1879.c
  
      {
 diff --git a/src/melee/gm/gmevent.c b/src/melee/gm/gmevent.c
+index 51df46a..7ff7015 100644
 --- a/src/melee/gm/gmevent.c
 +++ b/src/melee/gm/gmevent.c
-@@ -135,7 +135,7 @@
+@@ -135,7 +135,7 @@ DISC_ASSERT_SIZE(struct gm_evbonus, 0x18);
  DISC_ASSERT_SIZE(struct gm_804D6900_t, 0x28);
  
  /* gm_804D6900[0] is the in-archive `gm_804D6900_t*[]` level table. */
@@ -350,9 +362,10 @@ diff --git a/src/melee/gm/gmevent.c b/src/melee/gm/gmevent.c
  #define EV_INIT(l) DP(struct gm_evinit, (l)->evinit)
  #define EV_BONUS(l) DP(struct gm_evbonus, (l)->evbonus)
 diff --git a/src/melee/gm/gmstaffroll.c b/src/melee/gm/gmstaffroll.c
+index 01697a8..093ee4b 100644
 --- a/src/melee/gm/gmstaffroll.c
 +++ b/src/melee/gm/gmstaffroll.c
-@@ -1230,9 +1230,7 @@
+@@ -1230,9 +1230,7 @@ void gm_Scene_StaffRoll_OnEnter(void* unused)
          GObj_SetupGXLinkMax(gobj, fn_801AA854, 5);
          gobj->gxlink_prios = 0x189;
          HSD_CObjAddAnim(
@@ -363,7 +376,7 @@ diff --git a/src/melee/gm/gmstaffroll.c b/src/melee/gm/gmstaffroll.c
          HSD_CObjReqAnim(cobj, 0.0F);
          HSD_GObj_SetupProc(gobj, fn_801AA7F8, 0);
      }
-@@ -1266,9 +1264,7 @@
+@@ -1266,9 +1264,7 @@ void gm_Scene_StaffRoll_OnEnter(void* unused)
          GObj_SetupGXLink(gobj, HSD_GObj_FogCallback, 3, 0);
          HSD_Fog_8037DE7C(
              fog, DP(HSD_AObjDesc,
@@ -374,7 +387,7 @@ diff --git a/src/melee/gm/gmstaffroll.c b/src/melee/gm/gmstaffroll.c
                          ->aobjdesc));
          HSD_FogReqAnim(fog, 0.0F);
          HSD_GObj_SetupProc(gobj, fn_801AC67C, 0);
-@@ -1276,7 +1272,7 @@
+@@ -1276,7 +1272,7 @@ void gm_Scene_StaffRoll_OnEnter(void* unused)
      {
          HSD_GObj* gobj = GObj_Create(3, 5, 0);
          DynamicModelDesc* model =
@@ -383,7 +396,7 @@ diff --git a/src/melee/gm/gmstaffroll.c b/src/melee/gm/gmstaffroll.c
          HSD_JObj* jobj = HSD_JObjLoadJoint(DP(HSD_Joint, model->joint));
          gm_804D682C = jobj;
          HSD_GObjObject_80390A70(gobj, HSD_GObj_JObjKind, jobj);
-@@ -1317,7 +1313,7 @@
+@@ -1317,7 +1313,7 @@ void gm_Scene_StaffRoll_OnEnter(void* unused)
      {
          final_gobj = GObj_Create(14, 15, 0);
          DynamicModelDesc* model =
@@ -393,9 +406,10 @@ diff --git a/src/melee/gm/gmstaffroll.c b/src/melee/gm/gmstaffroll.c
          HSD_GObjObject_80390A70(final_gobj, HSD_GObj_JObjKind, jobj);
          GObj_SetupGXLink(final_gobj, HSD_GObj_JObjCallback, gx_link, 0);
 diff --git a/src/melee/if/ifnametag.c b/src/melee/if/ifnametag.c
+index 2690d90..e9d9286 100644
 --- a/src/melee/if/ifnametag.c
 +++ b/src/melee/if/ifnametag.c
-@@ -194,15 +194,15 @@
+@@ -194,15 +194,15 @@ void un_802FCBA0(void)
      DP_SET(un_804A1ED0.joint, DP(HSD_Joint, d->joint));
      if (d->anims) {
          DP_SET(un_804A1ED0.animjoint,
@@ -415,9 +429,10 @@ diff --git a/src/melee/if/ifnametag.c b/src/melee/if/ifnametag.c
  }
  #ifdef MUST_MATCH
 diff --git a/src/melee/if/ifstatus.c b/src/melee/if/ifstatus.c
+index 93121da..d55d943 100644
 --- a/src/melee/if/ifstatus.c
 +++ b/src/melee/if/ifstatus.c
-@@ -240,7 +240,7 @@
+@@ -240,7 +240,7 @@ static inline void ifStatus_InitDamageDigits(IfDamageState* state,
  
      ones_jobj = state->jobjs[Ones];
      digit = state->damage_percent % 10;
@@ -426,7 +441,7 @@ diff --git a/src/melee/if/ifstatus.c b/src/melee/if/ifstatus.c
      HSD_TexAnim* digit_anim = get_digit_texanim(aj);
      HSD_TObjAddAnimAll(ones_jobj->u.dobj->mobj->tobj, digit_anim);
      HSD_TObjReqAnimAll(ones_jobj->u.dobj->mobj->tobj, 2.0F * digit);
-@@ -422,7 +422,7 @@
+@@ -422,7 +422,7 @@ void ifStatus_802F4EDC(HSD_GObj* gobj)
          digit_jobj = state->jobjs[Percent];
          if (digit_jobj != NULL) {
              tobj = digit_jobj->u.dobj->mobj->tobj;
@@ -435,7 +450,7 @@ diff --git a/src/melee/if/ifstatus.c b/src/melee/if/ifstatus.c
              HSD_TObjAddAnimAll(tobj, get_percent_texanim(aj));
              if (Player_GetMoreFlagsBit2((s8) state->player_slot)) {
                  HSD_TObjReqAnimAll(tobj, 1.0F);
-@@ -445,7 +445,7 @@
+@@ -445,7 +445,7 @@ void ifStatus_802F4EDC(HSD_GObj* gobj)
  
          post_digit_jobj = state->jobjs[Ones];
          digit = state->damage_percent % 10;
@@ -444,7 +459,7 @@ diff --git a/src/melee/if/ifstatus.c b/src/melee/if/ifstatus.c
          HSD_TexAnim* digit_anim = get_digit_texanim(aj);
          HSD_TObjAddAnimAll(post_digit_jobj->u.dobj->mobj->tobj, digit_anim);
          HSD_TObjReqAnimAll(post_digit_jobj->u.dobj->mobj->tobj, 2.0F * digit);
-@@ -706,7 +706,7 @@
+@@ -706,7 +706,7 @@ HSD_GObj* ifStatus_802F5EC0(IfDamageState* state, s32 player_idx)
      }
      if (state->jobjs[3] != NULL) {
          tobj = state->jobjs[3]->u.dobj->mobj->tobj;
@@ -453,7 +468,7 @@ diff --git a/src/melee/if/ifstatus.c b/src/melee/if/ifstatus.c
          HSD_TObjAddAnimAll(tobj, get_percent_texanim(aj));
          if (Player_GetMoreFlagsBit2((s8) state->player_slot) != 0) {
              HSD_TObjReqAnimAll(tobj, 1.0f);
-@@ -870,8 +870,8 @@
+@@ -870,8 +870,8 @@ void ifStatus_802F66A4(void)
      arch = ifAll_GetArchive();
      lbArchive_LoadSections(*arch, (void**) &num_tbl, num_models_name,
                             (void**) &mrk_tbl, mrk_models_name, 0);
@@ -465,9 +480,10 @@ diff --git a/src/melee/if/ifstatus.c b/src/melee/if/ifstatus.c
      hud->jobj_desc_parent = DP(DiscU32, num->anims);
      hud->janim_selection_joints = (HSD_AnimJoint*) DP(DiscU32, num->matanims);
 diff --git a/src/melee/if/ifstock.c b/src/melee/if/ifstock.c
+index 9298c80..1219724 100644
 --- a/src/melee/if/ifstock.c
 +++ b/src/melee/if/ifstock.c
-@@ -1025,7 +1025,7 @@
+@@ -1025,7 +1025,7 @@ void ifStock_802FAEC4(void)
      lbArchive_LoadSections(*ifAll_GetArchive(), (void**) &scene_models,
                             ifStock_SceneModels, 0);
      stock->x0 = scene_models;
@@ -477,9 +493,10 @@ diff --git a/src/melee/if/ifstock.c b/src/melee/if/ifstock.c
      ifStock_804A1ACC.x0 = 0;
      gobj = GObj_Create(14, 15, 0);
 diff --git a/src/melee/if/iftime.c b/src/melee/if/iftime.c
+index ff5998b..eba87d5 100644
 --- a/src/melee/if/iftime.c
 +++ b/src/melee/if/iftime.c
-@@ -26,7 +26,7 @@
+@@ -26,7 +26,7 @@ static struct ifTime_data {
      DiscU32* countdown_timer_models; /* DynamicModelDesc*[] in the archive */
  } ifTime_data;
  static DynamicModelDesc ifTime_match_timer_models;
@@ -488,7 +505,7 @@ diff --git a/src/melee/if/iftime.c b/src/melee/if/iftime.c
  
  static bool ifTime_LoadModels(void)
  {
-@@ -35,7 +35,7 @@
+@@ -35,7 +35,7 @@ static bool ifTime_LoadModels(void)
      lbArchive_LoadSections(*ifAll_GetArchive(), (void*) &ScInfTim_scene_models,
                             "ScInfTim_scene_models",
                             &ifTime_data.countdown_timer_models, "tdsce", 0);
@@ -498,9 +515,10 @@ diff --git a/src/melee/if/iftime.c b/src/melee/if/iftime.c
          ifTime_match_timer_models.joint = model->joint;
          ifTime_match_timer_models.anims = model->anims;
 diff --git a/src/melee/if/soundtest.c b/src/melee/if/soundtest.c
+index 7ec2824..c57faf7 100644
 --- a/src/melee/if/soundtest.c
 +++ b/src/melee/if/soundtest.c
-@@ -701,7 +701,7 @@
+@@ -701,7 +701,7 @@ struct un_803FA258_t {
  
  /// .sbss
  /* 4D6DA8 */ static DiscS32* un_804D6DA8; ///< [0..4],[7]: ints; [5],[6]: int* to int[]
@@ -510,9 +528,10 @@ diff --git a/src/melee/if/soundtest.c b/src/melee/if/soundtest.c
  /* 4D6DB0 */ static int un_804D6DB0;
  /* 4D6DB4 */ static int un_804D6DB4;
 diff --git a/src/melee/if/types.h b/src/melee/if/types.h
+index 72ac4c0..aec5ec3 100644
 --- a/src/melee/if/types.h
 +++ b/src/melee/if/types.h
-@@ -274,7 +274,7 @@
+@@ -274,7 +274,7 @@ struct ifStock_804A1378 {
      HSD_JObj* jobj_d;
      struct ifStock_804A1378_x204 x204[6];
  };
@@ -522,9 +541,10 @@ diff --git a/src/melee/if/types.h b/src/melee/if/types.h
  struct ifStock_804A1774 {
      char x0;
 diff --git a/src/melee/lb/lb_00B0.c b/src/melee/lb/lb_00B0.c
+index aa5b8a1..42e0843 100644
 --- a/src/melee/lb/lb_00B0.c
 +++ b/src/melee/lb/lb_00B0.c
-@@ -369,17 +369,17 @@
+@@ -369,17 +369,17 @@ void lb_8000C07C(HSD_JObj* jobj, s32 i, DiscU32* arg3, DiscU32* arg4,
      HSD_ShapeAnimJoint* phi_r6;
  
      if (arg3 != NULL) {
@@ -546,9 +566,10 @@ diff --git a/src/melee/lb/lb_00B0.c b/src/melee/lb/lb_00B0.c
          phi_r6 = NULL;
      }
 diff --git a/src/melee/lb/lbcardgame.c b/src/melee/lb/lbcardgame.c
+index 3acc11f..26cf664 100644
 --- a/src/melee/lb/lbcardgame.c
 +++ b/src/melee/lb/lbcardgame.c
-@@ -61,7 +61,7 @@
+@@ -61,7 +61,7 @@ typedef enum {
  #define _p(x) (state.x)
  
  #ifdef TARGET_PC
@@ -557,7 +578,7 @@ diff --git a/src/melee/lb/lbcardgame.c b/src/melee/lb/lbcardgame.c
  #else
  #define GET_ICON_DATA(idx) (_p(icon_data)[idx])
  #endif
-@@ -318,8 +318,7 @@
+@@ -318,8 +318,7 @@ void lbCardGame_InitScene(void)
  
          gobj = GObj_Create(HSD_GOBJ_CLASS_MEMCARD, HSD_GOBJ_PLINK_MEMCARD, 0);
  #ifdef TARGET_PC
@@ -568,9 +589,10 @@ diff --git a/src/melee/lb/lbcardgame.c b/src/melee/lb/lbcardgame.c
  #else
          jobj = HSD_JObjLoadJoint(_p(scene_data)->models[0]->joint);
 diff --git a/src/melee/pl/player.c b/src/melee/pl/player.c
+index a62fd13..50863af 100644
 --- a/src/melee/pl/player.c
 +++ b/src/melee/pl/player.c
-@@ -2019,7 +2019,7 @@
+@@ -2019,7 +2019,7 @@ void Player_80036DD8(void)
  
      lbArchive_LoadSymbols(str_PdPmdat_start_of_data, (void**) &sp8,
                            str_plLoadCommonData, NULL);
@@ -580,6 +602,7 @@ diff --git a/src/melee/pl/player.c b/src/melee/pl/player.c
  
  void Player_80036E20(CharacterKind ckind, HSD_Archive* archive, s32 arg2)
 diff --git a/src/melee/sc/types.h b/src/melee/sc/types.h
+index 23d4cda..8eec383 100644
 --- a/src/melee/sc/types.h
 +++ b/src/melee/sc/types.h
 @@ -8,7 +8,7 @@
@@ -592,9 +615,10 @@ diff --git a/src/melee/sc/types.h b/src/melee/sc/types.h
  /// Model with a single animation or no animation
  struct DISC_STRUCT StaticModelDesc {
 diff --git a/src/pc/disc.h b/src/pc/disc.h
+index eccb10f..dda267e 100644
 --- a/src/pc/disc.h
 +++ b/src/pc/disc.h
-@@ -49,9 +49,42 @@
+@@ -49,9 +49,42 @@ uint32_t pc_register_ext_ptr(const void* p);
  void* pc_resolve_ext_ptr(uint32_t id);
  void pc_disc_ptr_overflow(const void* p, const char* file, int line) __attribute__((noreturn));
  
@@ -637,23 +661,24 @@ diff --git a/src/pc/disc.h b/src/pc/disc.h
      if (!((uintptr_t)p >> 32)) {
          return (uint32_t)(uintptr_t)p;
      }
-@@ -61,6 +94,12 @@
- static inline void* pc_resolve_dp(uint32_t slot) {
+@@ -62,6 +95,12 @@ static inline void* pc_resolve_dp(uint32_t slot) {
      if ((slot & 0xFF000000u) == 0x02000000u) {
          return pc_resolve_ext_ptr(slot & 0x00FFFFFFu);
-+    }
+     }
 +    /* Only slots inside MEM1's window get the high half back. Anything else is
 +     * an ARAM offset -- the game tells those apart by being below 16MB, see
 +     * PC_IS_ARAM_ADDR -- and has to stay the small integer it already is. */
 +    if (pc_mem1_len != 0 && (uint32_t)(slot - pc_mem1_lo) < pc_mem1_len) {
 +        return (void*)(pc_mem1_hi | (uintptr_t)slot);
-     }
++    }
      return (void*)(uintptr_t)slot;
  }
+ 
 diff --git a/src/sysdolphin/baselib/archive.c b/src/sysdolphin/baselib/archive.c
+index e66fb6e..c5611da 100644
 --- a/src/sysdolphin/baselib/archive.c
 +++ b/src/sysdolphin/baselib/archive.c
-@@ -10,11 +10,13 @@
+@@ -10,11 +10,13 @@ static inline void Locate(HSD_Archive* archive)
      DiscU32* ptr;
  
      /* Pointer slots stay big-endian in the archive image and hold absolute
@@ -672,9 +697,10 @@ diff --git a/src/sysdolphin/baselib/archive.c b/src/sysdolphin/baselib/archive.c
      }
  #endif
 diff --git a/src/sysdolphin/baselib/particle.c b/src/sysdolphin/baselib/particle.c
+index b2f6381..ac72456 100644
 --- a/src/sysdolphin/baselib/particle.c
 +++ b/src/sysdolphin/baselib/particle.c
-@@ -205,7 +205,7 @@
+@@ -205,7 +205,7 @@ void psInitDataBankLocate(HSD_Archive* cmdBank, HSD_Archive* texBank,
  
      /* Phase 2: Fix cmdList kind bits */
      for (i = num; i < num2; i++) {
@@ -683,7 +709,7 @@ diff --git a/src/sysdolphin/baselib/particle.c b/src/sysdolphin/baselib/particle
          if (cmd != NULL) {
              cmd->kind = (cmd->kind & 0xF1FFFFFF) | 0x08000000;
          }
-@@ -222,7 +222,7 @@
+@@ -222,7 +222,7 @@ void psInitDataBankLocate(HSD_Archive* cmdBank, HSD_Archive* texBank,
          }
  
          for (k = 0; k < num_groups; k++) {
@@ -692,7 +718,7 @@ diff --git a/src/sysdolphin/baselib/particle.c b/src/sysdolphin/baselib/particle
              u32 fmt;
              u32 end;
              if (tg == NULL) {
-@@ -257,7 +257,7 @@
+@@ -257,7 +257,7 @@ void psInitDataBankLocate(HSD_Archive* cmdBank, HSD_Archive* texBank,
              HSD_PSFormGroup* fg;
              s32 fi;
              relocate_slot(&groups[i], formBank);
@@ -702,9 +728,10 @@ diff --git a/src/sysdolphin/baselib/particle.c b/src/sysdolphin/baselib/particle
                  continue;
              }
 diff --git a/src/sysdolphin/baselib/psstructs.h b/src/sysdolphin/baselib/psstructs.h
+index 5e9ebf9..4685ba1 100644
 --- a/src/sysdolphin/baselib/psstructs.h
 +++ b/src/sysdolphin/baselib/psstructs.h
-@@ -92,9 +92,9 @@
+@@ -92,9 +92,9 @@ DISC_ASSERT_SIZE(HSD_PSCmdList, 0x40);
  
  /* Per-bank lookup tables point into the banks: arrays of 32-bit slots holding
   * host addresses (or 0) after relocation. */
