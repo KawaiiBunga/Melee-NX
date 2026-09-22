@@ -1,4 +1,5 @@
 diff --git a/lib/dolphin/dvd/dvd.cpp b/lib/dolphin/dvd/dvd.cpp
+index 839f6d5..4f456b7 100644
 --- a/lib/dolphin/dvd/dvd.cpp
 +++ b/lib/dolphin/dvd/dvd.cpp
 @@ -11,7 +11,7 @@
@@ -27,7 +28,76 @@ diff --git a/lib/dolphin/dvd/dvd.cpp b/lib/dolphin/dvd/dvd.cpp
  
  using namespace aurora::dvd::impl;
  
-@@ -178,7 +181,7 @@
+@@ -101,6 +104,59 @@ public:
+   }
+ };
+ 
++// Reads a single extracted file straight off the SD card, used when booting
++// from a completed `files/` extraction with the source disc image removed.
++// Each opened DVD file gets its own stream/position, so the worker can read
++// them independently just as it does per-file nod handles.
++class CommandDataLoose final : public CommandDataBase {
++public:
++  SDL_IOStream* io;
++  explicit CommandDataLoose(SDL_IOStream* stream) : io(stream) { }
++  ~CommandDataLoose() override {
++    if (io != nullptr) {
++      SDL_CloseIO(io);
++    }
++  }
++
++  int64_t read(uint8_t* buf, size_t len) override {
++    if (io == nullptr) {
++      return -1;
++    }
++    size_t total = 0;
++    while (total < len) {
++      const size_t n = SDL_ReadIO(io, buf + total, len - total);
++      if (n == 0) {
++        if (SDL_GetIOStatus(io) != SDL_IO_STATUS_EOF) {
++          return -1;
++        }
++        // On-disc file data is padded to 32 bytes with zeros, and DVD callers
++        // routinely request that aligned length. Extracted loose files hold
++        // only the exact bytes, so zero-fill the tail to match disc reads.
++        std::memset(buf + total, 0, len - total);
++        total = len;
++        break;
++      }
++      total += n;
++    }
++    return static_cast<int64_t>(total);
++  }
++
++  int64_t seek(int64_t offset, int32_t whence) override {
++    if (io == nullptr) {
++      return -1;
++    }
++    const SDL_IOWhence w =
++        whence == 1 ? SDL_IO_SEEK_CUR : whence == 2 ? SDL_IO_SEEK_END : SDL_IO_SEEK_SET;
++    return SDL_SeekIO(io, offset, w);
++  }
++};
++
++// When true, the DVD layer serves files from s_looseFilesDir instead of a disc
++// image: s_disc/s_partition are null and the FST/DiskID were restored from a
++// saved `disc.meta` (see aurora_dvd_open_files).
++bool s_looseMode = false;
++std::string s_looseFilesDir;
++
+ CommandDataNod* s_disc;
+ 
+ void clearState() {
+@@ -118,6 +174,8 @@ void clearState() {
+   s_currentDir = 0;
+   s_currentPath = "/";
+   s_diskID = {};
++  s_looseMode = false;
++  s_looseFilesDir.clear();
+   s_initialized = false;
+ }
+ 
+@@ -178,7 +236,7 @@ void mmapStreamClose(void* userData) {
    if (stream->fileHandle != INVALID_HANDLE_VALUE) {
      CloseHandle(stream->fileHandle);
    }
@@ -36,7 +106,7 @@ diff --git a/lib/dolphin/dvd/dvd.cpp b/lib/dolphin/dvd/dvd.cpp
    if (stream->data != nullptr && stream->data != MAP_FAILED) {
      munmap(const_cast<uint8_t*>(stream->data), static_cast<size_t>(stream->size));
    }
-@@ -196,6 +199,7 @@
+@@ -196,6 +254,7 @@ int64_t sdlStreamReadAt(void* userData, uint64_t offset, void* out, size_t len)
      return -1;
    }
  
@@ -44,7 +114,7 @@ diff --git a/lib/dolphin/dvd/dvd.cpp b/lib/dolphin/dvd/dvd.cpp
    if (SDL_SeekIO(io, static_cast<Sint64>(offset), SDL_IO_SEEK_SET) < 0) {
      return -1;
    }
-@@ -218,6 +222,7 @@
+@@ -218,6 +277,7 @@ int64_t sdlStreamLen(void* userData) {
      return -1;
    }
  
@@ -52,7 +122,7 @@ diff --git a/lib/dolphin/dvd/dvd.cpp b/lib/dolphin/dvd/dvd.cpp
    const Sint64 size = SDL_GetIOSize(io);
    return size < 0 ? -1 : static_cast<int64_t>(size);
  }
-@@ -453,6 +458,28 @@
+@@ -453,6 +513,28 @@ public:
      m_doneCv.notify_all();
    }
  
@@ -81,7 +151,7 @@ diff --git a/lib/dolphin/dvd/dvd.cpp b/lib/dolphin/dvd/dvd.cpp
    void enqueue(DVDCommandBlock* block) {
      bool executeNow = false;
      {
-@@ -564,9 +591,17 @@
+@@ -564,10 +646,18 @@ private:
  
      std::unique_lock lk{m_mutex};
      while (true) {
@@ -89,7 +159,7 @@ diff --git a/lib/dolphin/dvd/dvd.cpp b/lib/dolphin/dvd/dvd.cpp
 +      m_cv.wait(lk, [&] { return m_shutdown || !m_queue.empty() || m_syncTask != nullptr; });
        if (m_shutdown) {
          return;
-+      }
+       }
 +      if (m_syncTask != nullptr) {
 +        std::function<void()> task = std::move(m_syncTask);
 +        m_syncTask = nullptr;
@@ -97,10 +167,11 @@ diff --git a/lib/dolphin/dvd/dvd.cpp b/lib/dolphin/dvd/dvd.cpp
 +        task();
 +        lk.lock();
 +        continue;
-       }
++      }
        DVDCommandBlock* block = m_queue.front();
        m_queue.pop_front();
-@@ -667,6 +702,7 @@
+       m_activeBlock = block;
+@@ -667,6 +757,7 @@ private:
    std::mutex m_mutex;
    std::condition_variable m_cv;
    std::condition_variable m_doneCv;
@@ -108,7 +179,7 @@ diff --git a/lib/dolphin/dvd/dvd.cpp b/lib/dolphin/dvd/dvd.cpp
    std::deque<DVDCommandBlock*> m_queue;
    DVDCommandBlock* m_activeBlock = nullptr;
    DVDCommandBlock* m_cancelActiveBlock = nullptr;
-@@ -711,16 +747,7 @@
+@@ -711,16 +802,7 @@ void cbForPrepareStreamAsync(s32 result, DVDCommandBlock* block) {
  
  } // namespace
  
@@ -126,7 +197,7 @@ diff --git a/lib/dolphin/dvd/dvd.cpp b/lib/dolphin/dvd/dvd.cpp
    NodDiscStream stream{};
    bool streamReady = false;
  
-@@ -789,7 +816,11 @@
+@@ -789,7 +871,11 @@ bool aurora_dvd_open(const char* disc_path) {
  #endif
  
    if (!streamReady) {
@@ -139,7 +210,7 @@ diff --git a/lib/dolphin/dvd/dvd.cpp b/lib/dolphin/dvd/dvd.cpp
      if (io == nullptr) {
        return false;
      }
-@@ -844,8 +875,37 @@
+@@ -844,8 +930,37 @@ bool aurora_dvd_open(const char* disc_path) {
    s_currentDir = 0;
    s_currentPath = "/";
    s_initialized = true;
@@ -177,3 +248,162 @@ diff --git a/lib/dolphin/dvd/dvd.cpp b/lib/dolphin/dvd/dvd.cpp
  }
  
  void aurora_dvd_close(void) {
+@@ -853,6 +968,130 @@ void aurora_dvd_close(void) {
+   clearState();
+ }
+ 
++// Persist the current disc's FST and DiskID so the game can later boot from a
++// `files/` extraction with the disc image removed. Only meaningful right after
++// a real disc open (before any overlay/mod entries exist). Safe no-op in loose
++// mode. Reuses Aurora's own built FST, so the loose boot navigates identically.
++bool aurora_dvd_save_meta(const char* meta_path) {
++  constexpr u32 kMetaMagic = 0x4D4C5601u; // "MLV\1"
++  std::lock_guard lock(s_fstLock);
++  if (!s_initialized || s_looseMode || meta_path == nullptr || s_fstEntries.empty()) {
++    return false;
++  }
++  SDL_IOStream* io = nullptr;
++  {
++    SWITCH_IO_LOCK();
++    io = SDL_IOFromFile(meta_path, "wb");
++  }
++  if (io == nullptr) {
++    return false;
++  }
++  bool ok = SDL_WriteU32LE(io, kMetaMagic) && SDL_WriteU32LE(io, 1u);
++  ok = ok && SDL_WriteIO(io, &s_diskID, sizeof(s_diskID)) == sizeof(s_diskID);
++  ok = ok && SDL_WriteU32LE(io, static_cast<u32>(s_baseEntryCount)) &&
++       SDL_WriteU32LE(io, static_cast<u32>(s_fstEntries.size()));
++  for (const auto& e : s_fstEntries) {
++    ok = ok && SDL_WriteU8(io, e.isDir ? 1 : 0) && SDL_WriteS32LE(io, e.parent) &&
++         SDL_WriteU32LE(io, e.nextOrLength) && SDL_WriteS32LE(io, e.origEntryNum) &&
++         SDL_WriteU32LE(io, static_cast<u32>(e.name.size()));
++    if (ok && !e.name.empty()) {
++      ok = SDL_WriteIO(io, e.name.data(), e.name.size()) == e.name.size();
++    }
++    if (!ok) {
++      break;
++    }
++  }
++  SDL_CloseIO(io);
++  return ok;
++}
++
++// Boot the DVD layer from an extracted `files/` directory plus the metadata
++// aurora_dvd_save_meta wrote, with no disc image present. Additive and
++// fail-safe: on any error it leaves the layer closed and returns false, so the
++// caller can fall back to requiring the disc image.
++bool aurora_dvd_open_files(const char* files_dir, const char* meta_path) {
++  constexpr u32 kMetaMagic = 0x4D4C5601u;
++  if (files_dir == nullptr || meta_path == nullptr) {
++    return false;
++  }
++  s_worker.stop();
++  clearState();
++
++  SDL_IOStream* io = nullptr;
++  {
++    SWITCH_IO_LOCK();
++    io = SDL_IOFromFile(meta_path, "rb");
++  }
++  if (io == nullptr) {
++    return false;
++  }
++
++  u32 magic = 0, version = 0, baseCount = 0, count = 0;
++  bool ok = SDL_ReadU32LE(io, &magic) && SDL_ReadU32LE(io, &version) && magic == kMetaMagic &&
++            version == 1u && SDL_ReadIO(io, &s_diskID, sizeof(s_diskID)) == sizeof(s_diskID) &&
++            SDL_ReadU32LE(io, &baseCount) && SDL_ReadU32LE(io, &count) && count > 0 && count <= 200000u;
++
++  if (ok) {
++    std::lock_guard lock(s_fstLock);
++    s_fstEntries.clear();
++    s_fstEntries.reserve(count);
++    s32 maxEntryNum = -1;
++    for (u32 i = 0; i < count && ok; ++i) {
++      u8 isDir = 0;
++      s32 parent = 0, origEntryNum = 0;
++      u32 nextOrLength = 0, nameLen = 0;
++      ok = SDL_ReadU8(io, &isDir) && SDL_ReadS32LE(io, &parent) && SDL_ReadU32LE(io, &nextOrLength) &&
++           SDL_ReadS32LE(io, &origEntryNum) && SDL_ReadU32LE(io, &nameLen) && nameLen <= 4096u;
++      if (!ok) {
++        break;
++      }
++      std::string name(nameLen, '\0');
++      if (nameLen > 0 && SDL_ReadIO(io, name.data(), nameLen) != nameLen) {
++        ok = false;
++        break;
++      }
++      FSTEntry entry;
++      entry.name = std::move(name);
++      entry.isDir = isDir != 0;
++      entry.parent = parent;
++      entry.nextOrLength = nextOrLength;
++      entry.overlayData = nullptr;
++      entry.isOverlay = false;
++      entry.origEntryNum = origEntryNum;
++      if (origEntryNum > maxEntryNum) {
++        maxEntryNum = origEntryNum;
++      }
++      s_fstEntries.push_back(std::move(entry));
++    }
++    if (ok && maxEntryNum >= 0) {
++      s_entryNumToFstIndex.assign(static_cast<size_t>(maxEntryNum) + 1, k_invalidFstEntry);
++      for (u32 i = 0; i < s_fstEntries.size(); ++i) {
++        const s32 en = s_fstEntries[i].origEntryNum;
++        if (en >= 0 && static_cast<size_t>(en) < s_entryNumToFstIndex.size()) {
++          s_entryNumToFstIndex[en] = static_cast<FstIndex>(i);
++        }
++      }
++      s_baseEntryCount = static_cast<s32>(baseCount);
++    } else {
++      ok = false;
++    }
++  }
++  SDL_CloseIO(io);
++
++  if (!ok) {
++    clearState();
++    return false;
++  }
++
++  s_looseMode = true;
++  s_looseFilesDir = files_dir;
++  s_currentDir = 0;
++  s_currentPath = "/";
++  s_initialized = true;
++  s_worker.start();
++  return true;
++}
++
+ void DVDInit(void) {}
+ 
+ const u8* DVDGetDOLLocation(s32* out_size) {
+@@ -1204,7 +1443,8 @@ BOOL DVDConvertEntrynumToPath(s32 entrynum, char* path, u32 maxlen) {
+ BOOL DVDFastOpen(s32 entrynum, DVDFileInfo* fileInfo) {
+   std::lock_guard lock(s_fstLock);
+ 
+-  if (!s_initialized || fileInfo == nullptr || !isValidEntryNum(entrynum) || s_partition == nullptr) {
++  if (!s_initialized || fileInfo == nullptr || !isValidEntryNum(entrynum) ||
++      (!s_looseMode && s_partition == nullptr)) {
+     return FALSE;
+   }
+ 
+@@ -1227,6 +1467,17 @@ BOOL DVDFastOpen(s32 entrynum, DVDFileInfo* fileInfo) {
+     }
+ 
+     fileInfo->cb.userData = new CommandDataOverlay(handle);
++  } else if (s_looseMode) {
++    const std::string path = s_looseFilesDir + build_path(fstIndex);
++    SDL_IOStream* io = nullptr;
++    {
++      SWITCH_IO_LOCK();
++      io = SDL_IOFromFile(path.c_str(), "rb");
++    }
++    if (io == nullptr) {
++      return FALSE;
++    }
++    fileInfo->cb.userData = new CommandDataLoose(io);
+   } else {
+     NodHandle* handle = nullptr;
+     NodResult result = nod_partition_open_file(s_partition, entry.origEntryNum, &handle);

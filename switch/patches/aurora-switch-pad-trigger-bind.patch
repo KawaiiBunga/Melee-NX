@@ -1,0 +1,67 @@
+diff --git a/lib/dolphin/pad/pad.cpp b/lib/dolphin/pad/pad.cpp
+index 0a35990..3f8589e 100644
+--- a/lib/dolphin/pad/pad.cpp
++++ b/lib/dolphin/pad/pad.cpp
+@@ -18,6 +18,23 @@ constexpr aurora::Module Log{"aurora::input"};
+ constexpr int32_t k_mappingsFileVersion = 4;
+ constexpr int32_t k_minMappingsFileVersion = 3;
+ 
++// A GC digital button can be driven by an analog trigger -- e.g. binding Z to
++// the L/R (ZL/ZR) triggers, which SDL reports as axes rather than buttons on
++// GameCube/Switch/Pro controllers. Such a source is stored in a
++// PADButtonMapping's nativeButton field with this sentinel encoding so it
++// round-trips through the existing mapping and serialization paths untouched.
++constexpr u32 k_nativeTriggerFlag = 0x40000000u;
++constexpr int32_t k_triggerButtonThreshold = 16384; // ~75% pull; matches PADGetNativeAxisPulled
++constexpr bool native_is_trigger(u32 nativeButton) {
++  return nativeButton != PAD_NATIVE_BUTTON_INVALID && (nativeButton & k_nativeTriggerFlag) != 0u;
++}
++constexpr SDL_GamepadAxis native_trigger_axis(u32 nativeButton) {
++  return static_cast<SDL_GamepadAxis>(nativeButton & 0xFFu);
++}
++constexpr u32 native_trigger_encode(SDL_GamepadAxis axis) {
++  return k_nativeTriggerFlag | static_cast<u32>(axis);
++}
++
+ std::array<PADButtonMapping, PAD_BUTTON_COUNT> g_defaultButtonsStandard{{
+     {SDL_GAMEPAD_BUTTON_SOUTH, PAD_BUTTON_A},
+     {SDL_GAMEPAD_BUTTON_EAST, PAD_BUTTON_B},
+@@ -806,7 +823,13 @@ u32 PADRead(PADStatus* status) {
+       bool rightTriggerSet = false;
+       std::ranges::for_each(controller->m_buttonMapping, [&controller, &i, &status, &leftTriggerSet,
+                                                           &rightTriggerSet](const auto& mapping) {
+-        if (SDL_GetGamepadButton(controller->m_controller, static_cast<SDL_GamepadButton>(mapping.nativeButton))) {
++        const bool pressed =
++            native_is_trigger(mapping.nativeButton)
++                ? SDL_GetGamepadAxis(controller->m_controller, native_trigger_axis(mapping.nativeButton)) >=
++                      k_triggerButtonThreshold
++                : SDL_GetGamepadButton(controller->m_controller,
++                                       static_cast<SDL_GamepadButton>(mapping.nativeButton)) != 0;
++        if (pressed) {
+           status[i].button |= mapping.padButton;
+         }
+ 
+@@ -1543,6 +1566,9 @@ const char* PADGetButtonName(const PADButton button) {
+ }
+ 
+ const char* PADGetNativeButtonName(u32 button) {
++  if (native_is_trigger(button)) {
++    return SDL_GetGamepadStringForAxis(native_trigger_axis(button));
++  }
+   return SDL_GetGamepadStringForButton(static_cast<SDL_GamepadButton>(button));
+ }
+ 
+@@ -1579,6 +1605,13 @@ int32_t PADGetNativeButtonPressed(const u32 port) {
+       return i;
+     }
+   }
++  // Allow an analog trigger (reported as an axis) to be bound to a digital GC
++  // button such as Z. Detected at the same threshold PADGetNativeAxisPulled uses.
++  for (const auto axis : {SDL_GAMEPAD_AXIS_LEFT_TRIGGER, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER}) {
++    if (SDL_GetGamepadAxis(controller->m_controller, axis) >= k_triggerButtonThreshold) {
++      return static_cast<int32_t>(native_trigger_encode(axis));
++    }
++  }
+   return -1;
+ }
+ 

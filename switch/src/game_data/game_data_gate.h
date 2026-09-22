@@ -19,6 +19,11 @@ inline constexpr const char* kDataRoot = "sdmc:/switch/melee-nx";
  * "./files" / MELEE_FILES_DIR convention -- see docs/PORTING-NOTES.md). */
 inline constexpr const char* kFilesDir = "sdmc:/switch/melee-nx/files";
 
+/* Sentinel disc argument returned when the source disc image is gone but a
+ * completed extraction plus captured disc.meta/disc-boot.bin can boot on their
+ * own. melee-pc's launcher (src/pc/launcher.cpp) recognizes the same literal. */
+inline constexpr const char* kLooseBootSentinel = "@melee-nx-loose";
+
 /* melee-pc always needs an actual disc image open (aurora_dvd_open(), font
  * extraction) even when every archive is served from the kFilesDir loose-file
  * cache -- that cache only skips the slower disc-seek path per file, it is

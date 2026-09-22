@@ -1,0 +1,47 @@
+diff --git a/lib/io.cpp b/lib/io.cpp
+index b403c4e..d39e1bd 100644
+--- a/lib/io.cpp
++++ b/lib/io.cpp
+@@ -224,10 +224,25 @@ bool AtomicFileWriter::commit() noexcept {
+   }
+ 
+   if (!SDL_RenamePath(m_temporaryPath.c_str(), m_targetPath.c_str())) {
+-    const std::string error{SDL_GetError()};
+-    discard();
+-    restore_error(error);
+-    return false;
++    // Horizon/FAT: rename cannot always overwrite an existing target, and some
++    // filesystem backends reject a rename outright. Remove any existing target
++    // and retry; if that still fails, fall back to a non-atomic copy so the
++    // write lands. Atomicity is best-effort here, but a lost config is worse.
++    SDL_RemovePath(m_targetPath.c_str());
++    if (!SDL_RenamePath(m_temporaryPath.c_str(), m_targetPath.c_str())) {
++      Stream src{SDL_IOFromFile(m_temporaryPath.c_str(), "rb")};
++      Stream dst{SDL_IOFromFile(m_targetPath.c_str(), "wb")};
++      const bool copied = src && dst && copy_stream(src.get(), dst.get());
++      src.reset();
++      dst.reset();
++      if (!copied) {
++        const std::string error{SDL_GetError()};
++        discard();
++        restore_error(error);
++        return false;
++      }
++      SDL_RemovePath(m_temporaryPath.c_str());
++    }
+   }
+ 
+   m_temporaryPath.clear();
+@@ -251,6 +266,12 @@ AtomicFileWriter open_atomic_file(const std::filesystem::path& path, AtomicFileM
+                               s_temporaryFileCounter.fetch_add(1, std::memory_order_relaxed);
+       temporaryPath = targetPath + ".tmp-" + std::to_string(suffix);
+       stream.reset(SDL_IOFromFile(temporaryPath.c_str(), "wb+x"));
++      if (!stream) {
++        // Horizon/newlib may not honor O_EXCL ("x"). The randomized suffix
++        // already makes a collision negligible, so retry without exclusivity
++        // rather than fail the whole write.
++        stream.reset(SDL_IOFromFile(temporaryPath.c_str(), "wb+"));
++      }
+     }
+     if (!stream) {
+       return {};

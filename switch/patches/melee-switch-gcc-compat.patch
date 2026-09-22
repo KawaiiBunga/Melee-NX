@@ -1,10 +1,12 @@
 diff --git a/resources/fps.rml b/resources/fps.rml
+index 0f8f87b..9e0dee1 100644
 --- a/resources/fps.rml
 +++ b/resources/fps.rml
 @@ -1 +1 @@
 -<rml><head><title>FPS</title><style>body { font-family: "Liberation Sans"; font-size: 16dp; color: #ffffff; background-color: #0b101cdd; position: absolute; top: 8dp; right: 8dp; width: 82dp; height: 24dp; padding: 5dp; pointer-events: none; z-index: 100; }</style></head><body><span id="count">FPS</span></body></rml>
 +<rml><head><title>FPS</title><style>body { font-family: "Liberation Sans"; font-size: 14dp; color: #ffffff; background-color: #0b101cdd; position: absolute; top: 8dp; right: 8dp; min-width: 82dp; width: auto; height: auto; padding: 4dp 8dp; border-radius: 4dp; pointer-events: none; z-index: 100; white-space: nowrap; }</style></head><body><span id="count">FPS</span></body></rml>
 diff --git a/resources/port-menu.rml b/resources/port-menu.rml
+index 8df0b0b..0614fcd 100644
 --- a/resources/port-menu.rml
 +++ b/resources/port-menu.rml
 @@ -1,8 +1,8 @@
@@ -36,10 +38,81 @@ diff --git a/resources/port-menu.rml b/resources/port-menu.rml
 +<div id="hints">ARROWS / D-PAD Navigate <span>A Select</span><span>B / - + R3 Close</span><span>- + R3 Opens this menu</span></div>
  </div>
  </body></rml>
+diff --git a/src/melee/lb/lb_01F8.c b/src/melee/lb/lb_01F8.c
+index 28b33cf..c6b7e32 100644
+--- a/src/melee/lb/lb_01F8.c
++++ b/src/melee/lb/lb_01F8.c
+@@ -61,18 +61,28 @@ void lbMthp8001F928(HSD_GObj* gobj, int arg1)
+     GXInitTexObj(&lbl_804335B8.tex0, lbl_804335B8.x20, lbl_804335B8.x6C,
+                  lbl_804335B8.x6E, 1, 0, 0, 0);
+     GXInitTexObjLOD(&lbl_804335B8.tex0, 0, 0, 0.0F, 0.0F, 0.0F, 0, 0, 0);
++#ifdef TARGET_PC
++    /* Re-decoded into the same buffer every frame: never cache (see lbmthp.c). */
++    GXInitTexObjNoCache(&lbl_804335B8.tex0, GX_TRUE);
++#endif
+     GXLoadTexObj(&lbl_804335B8.tex0, 0);
+ 
+     /* Second texture - half size */
+     GXInitTexObj(&lbl_804335B8.tex1, lbl_804335B8.x44, (u16) (*pWidth >> 1),
+                  (u16) (*pHeight >> 1), 1, 0, 0, 0);
+     GXInitTexObjLOD(&lbl_804335B8.tex1, 0, 0, 0.0F, 0.0F, 0.0F, 0, 0, 0);
++#ifdef TARGET_PC
++    GXInitTexObjNoCache(&lbl_804335B8.tex1, GX_TRUE);
++#endif
+     GXLoadTexObj(&lbl_804335B8.tex1, 1);
+ 
+     /* Third texture - half size */
+     GXInitTexObj(&lbl_804335B8.tex2, lbl_804335B8.x68, (u16) (*pWidth >> 1),
+                  (u16) (*pHeight >> 1), 1, 0, 0, 0);
+     GXInitTexObjLOD(&lbl_804335B8.tex2, 0, 0, 0.0F, 0.0F, 0.0F, 0, 0, 0);
++#ifdef TARGET_PC
++    GXInitTexObjNoCache(&lbl_804335B8.tex2, GX_TRUE);
++#endif
+     GXLoadTexObj(&lbl_804335B8.tex2, 2);
+ 
+     HSD_SObjLib_803A49E0(gobj, arg1);
+diff --git a/src/melee/lb/lbmthp.c b/src/melee/lb/lbmthp.c
+index be2ec43..9bc0f92 100644
+--- a/src/melee/lb/lbmthp.c
++++ b/src/melee/lb/lbmthp.c
+@@ -647,6 +647,12 @@ void lbMthp_8001F67C(HSD_GObj* gobj, int arg1)
+                      GX_CLAMP, GX_CLAMP, 0U);
+         GXInitTexObjLOD(&streamPlayer->unk_178, GX_NEAR, GX_NEAR, 0.0f, 0.0f,
+                         0.0f, 0U, 0U, GX_ANISO_1);
++#ifdef TARGET_PC
++        /* Re-decoded into the same buffer every frame: never cache it, or the
++         * resolve-side object cache serves a stale/mismatched luma-chroma plane
++         * and the video renders corrupted. */
++        GXInitTexObjNoCache(&streamPlayer->unk_178, GX_TRUE);
++#endif
+         GXLoadTexObj(&streamPlayer->unk_178, GX_TEXMAP0);
+ 
+         GXInitTexObj(&streamPlayer->unk_198, streamPlayer->unk_54,
+@@ -654,6 +660,9 @@ void lbMthp_8001F67C(HSD_GObj* gobj, int arg1)
+                      GX_TF_I8, GX_CLAMP, GX_CLAMP, 0U);
+         GXInitTexObjLOD(&streamPlayer->unk_198, GX_NEAR, GX_NEAR, 0.0f, 0.0f,
+                         0.0f, 0U, 0U, GX_ANISO_1);
++#ifdef TARGET_PC
++        GXInitTexObjNoCache(&streamPlayer->unk_198, GX_TRUE);
++#endif
+         GXLoadTexObj(&streamPlayer->unk_198, GX_TEXMAP1);
+ 
+         GXInitTexObj(&streamPlayer->unk_1B8, streamPlayer->unk_58,
+@@ -661,6 +670,9 @@ void lbMthp_8001F67C(HSD_GObj* gobj, int arg1)
+                      GX_TF_I8, GX_CLAMP, GX_CLAMP, 0U);
+         GXInitTexObjLOD(&streamPlayer->unk_1B8, GX_NEAR, GX_NEAR, 0.0f, 0.0f,
+                         0.0f, 0U, 0U, GX_ANISO_1);
++#ifdef TARGET_PC
++        GXInitTexObjNoCache(&streamPlayer->unk_1B8, GX_TRUE);
++#endif
+         GXLoadTexObj(&streamPlayer->unk_1B8, GX_TEXMAP2);
+ 
+         HSD_SObjLib_803A49E0(gobj, arg1);
 diff --git a/src/pc/audio.c b/src/pc/audio.c
+index bf8de60..5e5d5bc 100644
 --- a/src/pc/audio.c
 +++ b/src/pc/audio.c
-@@ -461,8 +461,10 @@
+@@ -461,8 +461,10 @@ static void mix_voice(Voice* v, float* out) {
      }
  
      /* Fast path for ratio == 0x10000 with non-zero phase: phase remains constant throughout. */
@@ -51,7 +124,7 @@ diff --git a/src/pc/audio.c b/src/pc/audio.c
          for (int i = 0; i < AX_FRAME; i++) {
              s16 s;
              if (!next_sample(v, &s)) {
-@@ -473,9 +475,8 @@
+@@ -473,9 +475,8 @@ static void mix_voice(Voice* v, float* out) {
              }
              v->prev = v->cur;
              v->cur = s;
@@ -63,7 +136,7 @@ diff --git a/src/pc/audio.c b/src/pc/audio.c
              out[i * 2] += sv * vl;
              out[i * 2 + 1] += sv * vr;
              if (send_a) {
-@@ -506,33 +507,16 @@
+@@ -506,33 +507,16 @@ static void mix_voice(Voice* v, float* out) {
              if (!next_sample(v, &s)) {
                  pb->state = 0;
                  pb->ve.currentVolume = (u16)(vol < 0 ? 0 : vol > 32767 ? 32767 : vol);
@@ -100,7 +173,7 @@ diff --git a/src/pc/audio.c b/src/pc/audio.c
          out[i * 2] += sv * vl;
          out[i * 2 + 1] += sv * vr;
          if (send_a) {
-@@ -757,6 +741,23 @@
+@@ -757,6 +741,23 @@ void AXInit(void) {
              fprintf(stderr, "audio: SDL_OpenAudioDeviceStream failed: %s\n", SDL_GetError());
              return;
          }
@@ -124,7 +197,123 @@ diff --git a/src/pc/audio.c b/src/pc/audio.c
          SDL_ResumeAudioStreamDevice(s_stream);
      }
  }
+diff --git a/src/pc/discfont.c b/src/pc/discfont.c
+index d039d3f..04b159a 100644
+--- a/src/pc/discfont.c
++++ b/src/pc/discfont.c
+@@ -216,3 +216,94 @@ done:
+     nod_free(disc);
+     return ok;
+ }
++
++/* Lift the 0x440 disc header + main.dol out of the disc image and write them
++ * as one [header][dol] blob, so the fonts can be recovered later with no disc
++ * image present (see pc_load_disc_fonts_from_boot). Returns false, writing
++ * nothing usable, on any error. No game data is retained beyond the user's own
++ * SD card, matching pc_load_disc_fonts. */
++bool pc_save_disc_boot(const char* disc_path, const char* out_path) {
++    NodHandle* disc = NULL;
++    if (pc_open_nod_disc(disc_path, &disc) != NOD_RESULT_OK || disc == NULL) {
++        return false;
++    }
++
++    bool ok = false;
++    u8* dol = NULL;
++    FILE* out = NULL;
++    u8 header[0x440];
++    if (nod_seek(disc, 0, SEEK_SET) < 0 || !read_exact(disc, header, sizeof header)) {
++        goto done;
++    }
++
++    u32 dol_off = be32(header + DOL_OFFSET_FIELD);
++    u32 fst_off = be32(header + FST_OFFSET_FIELD);
++    if (fst_off <= dol_off || fst_off - dol_off > DOL_MAX_SIZE) {
++        goto done;
++    }
++    size_t dol_size = (size_t)(fst_off - dol_off);
++
++    dol = malloc(dol_size);
++    if (dol == NULL) {
++        goto done;
++    }
++    if (nod_seek(disc, dol_off, SEEK_SET) < 0 || !read_exact(disc, dol, dol_size)) {
++        goto done;
++    }
++
++    out = fopen(out_path, "wb");
++    if (out == NULL) {
++        goto done;
++    }
++    ok = fwrite(header, 1, sizeof header, out) == sizeof header &&
++         fwrite(dol, 1, dol_size, out) == dol_size;
++
++done:
++    if (out != NULL) {
++        fclose(out);
++    }
++    free(dol);
++    nod_free(disc);
++    return ok;
++}
++
++/* Recover the fonts from a [header][dol] blob written by pc_save_disc_boot,
++ * used when booting from a files/ extraction with the disc image removed. */
++bool pc_load_disc_fonts_from_boot(const char* boot_path) {
++    FILE* f = fopen(boot_path, "rb");
++    if (f == NULL) {
++        fprintf(stderr, "discfont: cannot open %s\n", boot_path);
++        return false;
++    }
++
++    bool ok = false;
++    u8* dol = NULL;
++    u8 header[0x440];
++    if (fread(header, 1, sizeof header, f) != sizeof header) {
++        goto done;
++    }
++    if (fseek(f, 0, SEEK_END) != 0) {
++        goto done;
++    }
++    long total = ftell(f);
++    if (total <= (long)sizeof header) {
++        goto done;
++    }
++    size_t dol_size = (size_t)total - sizeof header;
++    if (dol_size > DOL_MAX_SIZE) {
++        goto done;
++    }
++
++    dol = malloc(dol_size);
++    if (dol == NULL || fseek(f, (long)sizeof header, SEEK_SET) != 0 ||
++        fread(dol, 1, dol_size, f) != dol_size) {
++        goto done;
++    }
++
++    ok = load_from_dol(dol, dol_size, (const char*)header);
++
++done:
++    free(dol);
++    fclose(f);
++    return ok;
++}
+diff --git a/src/pc/discfont.h b/src/pc/discfont.h
+index a9c3fbd..e8575bb 100644
+--- a/src/pc/discfont.h
++++ b/src/pc/discfont.h
+@@ -7,6 +7,11 @@ extern "C" {
+ /* Fill HSD_DebugFontAtlas and HSD_SisLib_FontAtlas from the disc's main.dol.
+  * Call once after the disc path is known and before the game boots. */
+ bool pc_load_disc_fonts(const char* disc_path);
++/* Save the disc header + main.dol as one blob at out_path, and recover the
++ * fonts from it later, so the game can boot from a files/ extraction with the
++ * disc image removed. */
++bool pc_save_disc_boot(const char* disc_path, const char* out_path);
++bool pc_load_disc_fonts_from_boot(const char* boot_path);
+ #ifdef __cplusplus
+ }
+ #endif
 diff --git a/src/pc/file_cache.cpp b/src/pc/file_cache.cpp
+index e4d79ec..4ad79a4 100644
 --- a/src/pc/file_cache.cpp
 +++ b/src/pc/file_cache.cpp
 @@ -25,6 +25,8 @@
@@ -136,7 +325,7 @@ diff --git a/src/pc/file_cache.cpp b/src/pc/file_cache.cpp
  namespace {
  
  struct CachedEntry {
-@@ -97,7 +99,12 @@
+@@ -97,7 +99,12 @@ CacheProfile get_effective_profile() {
          size_t mb = static_cast<size_t>(strtoul(env_mb, nullptr, 10));
          if (mb <= 24)
              return PROFILE_LOW_RAM;
@@ -150,7 +339,7 @@ diff --git a/src/pc/file_cache.cpp b/src/pc/file_cache.cpp
              return PROFILE_HANDHELD;
          return PROFILE_DESKTOP;
      }
-@@ -188,6 +195,7 @@
+@@ -188,6 +195,7 @@ bool preload_single_file(const char* name, int entryNum) {
      // 1. Check if loose file exists
      std::string loose_path = resolve_loose_path(key.c_str());
      if (!loose_path.empty()) {
@@ -158,7 +347,7 @@ diff --git a/src/pc/file_cache.cpp b/src/pc/file_cache.cpp
          struct stat st;
          if (stat(loose_path.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
              std::ifstream in(loose_path, std::ios::binary);
-@@ -312,6 +320,7 @@
+@@ -312,6 +320,7 @@ bool pc_file_cache_get(const char* filename, void* dst, size_t* size) {
      // Check loose file directory override
      std::string loose_path = resolve_loose_path(key.c_str());
      if (!loose_path.empty()) {
@@ -166,7 +355,7 @@ diff --git a/src/pc/file_cache.cpp b/src/pc/file_cache.cpp
          struct stat st;
          if (stat(loose_path.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
              std::ifstream in(loose_path, std::ios::binary);
-@@ -353,6 +362,7 @@
+@@ -353,6 +362,7 @@ bool pc_file_cache_get_size(const char* filename, size_t* size) {
  
      std::string loose_path = resolve_loose_path(key.c_str());
      if (!loose_path.empty()) {
@@ -175,9 +364,42 @@ diff --git a/src/pc/file_cache.cpp b/src/pc/file_cache.cpp
          if (stat(loose_path.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
              *size = static_cast<size_t>(st.st_size);
 diff --git a/src/pc/launcher.cpp b/src/pc/launcher.cpp
+index ea637ab..f415a87 100644
 --- a/src/pc/launcher.cpp
 +++ b/src/pc/launcher.cpp
-@@ -877,7 +877,15 @@
+@@ -21,6 +21,31 @@
+ #include <sys/stat.h>
+ #include <vector>
+ 
++// Boot from an extracted files/ directory with the disc image removed, and
++// capture the metadata that makes that possible. Declared here because they are
++// melee-nx additions to aurora's DVD layer, not part of <aurora/dvd.h>.
++extern "C" bool aurora_dvd_open_files(const char* files_dir, const char* meta_path);
++extern "C" bool aurora_dvd_save_meta(const char* meta_path);
++
++namespace {
++// Sentinel disc argument (see game_data_gate.cpp) meaning "boot from the files/
++// extraction, no disc image".
++constexpr const char* kLooseBootDisc = "@melee-nx-loose";
++// "sdmc:/switch/melee-nx/files" -> "sdmc:/switch/melee-nx".
++std::string data_root_from_files_dir(const char* files_dir) {
++    std::string fd = files_dir;
++    while (!fd.empty() && (fd.back() == '/' || fd.back() == '\\')) {
++        fd.pop_back();
++    }
++    const auto slash = fd.find_last_of("/\\");
++    return slash == std::string::npos ? fd : fd.substr(0, slash);
++}
++bool regular_file_exists(const std::string& path) {
++    struct stat st;
++    return stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
++}
++}  // namespace
++
+ namespace {
+ launcher::Preferences prefs;
+ std::filesystem::path config_path;
+@@ -877,7 +902,15 @@ extern "C" void pc_launcher_configure(AuroraConfig* config) {
  }
  
  static std::filesystem::path pc_resources_path() {
@@ -194,17 +416,54 @@ diff --git a/src/pc/launcher.cpp b/src/pc/launcher.cpp
      return "";
  #else
      const char* base = SDL_GetBasePath();
-@@ -892,7 +900,8 @@
+@@ -888,11 +921,44 @@ static std::filesystem::path pc_resources_path() {
+ extern "C" int pc_launcher_run(const char* command_line_disc, SDL_Window* window) {
+     try {
+         std::string error;
+-        if (command_line_disc) {
++        if (command_line_disc && std::string(command_line_disc) == kLooseBootDisc) {
++            // No disc image: boot from a completed files/ extraction plus the
++            // metadata a prior disc boot captured. Falls through to the launcher
++            // UI on any failure, exactly as a missing disc would.
++            const char* files_dir = std::getenv("MELEE_FILES_DIR");
++            if (files_dir && *files_dir) {
++                const std::string root = data_root_from_files_dir(files_dir);
++                const std::string meta = root + "/disc.meta";
++                const std::string boot = root + "/disc-boot.bin";
++                if (aurora_dvd_open_files(files_dir, meta.c_str())) {
++                    pc_load_disc_fonts_from_boot(boot.c_str());
++                    prefs.disc.clear();
++                    return 1;
++                }
++                aurora_dvd_close();
++            }
++            error = "Extracted game data is present but could not be opened. "
++                    "Place the Melee disc image next to melee.nro.";
++        } else if (command_line_disc) {
              auto info = launcher::inspect_disc(command_line_disc);
              if (info.supported && aurora_dvd_open(command_line_disc)) {
                  pc_load_disc_fonts(command_line_disc);
 -                prefs.disc = (std::string(command_line_disc).rfind("content://", 0) == 0) ?
++                // Capture disc metadata + fonts so the game can later boot with
++                // the image removed. Only where an extraction lives (Switch sets
++                // MELEE_FILES_DIR); written once, cheap to skip thereafter.
++                if (const char* files_dir = std::getenv("MELEE_FILES_DIR")) {
++                    const std::string root = data_root_from_files_dir(files_dir);
++                    const std::string meta = root + "/disc.meta";
++                    const std::string boot = root + "/disc-boot.bin";
++                    if (!regular_file_exists(meta)) {
++                        aurora_dvd_save_meta(meta.c_str());
++                    }
++                    if (!regular_file_exists(boot)) {
++                        pc_save_disc_boot(command_line_disc, boot.c_str());
++                    }
++                }
 +                prefs.disc = (std::string(command_line_disc).rfind("content://", 0) == 0 ||
 +                              std::string(command_line_disc).find(":/") != std::string::npos) ?
                                   command_line_disc :
                                   std::filesystem::absolute(command_line_disc).string();
                  if (!launcher::save_preferences(config_path, prefs, error))
-@@ -948,7 +957,8 @@
+@@ -948,7 +1014,8 @@ public:
      // Set while the menu writes its own widgets: suppresses the Change and
      // Focus events that echo back, which would otherwise loop or chatter.
      bool quiet = false;
@@ -214,7 +473,7 @@ diff --git a/src/pc/launcher.cpp b/src/pc/launcher.cpp
      int tab = 0;
      u32 pad_port = 0;
      // -1 when idle, otherwise the mapping slot waiting for input. Axis slots
-@@ -1105,7 +1115,12 @@
+@@ -1105,7 +1172,12 @@ public:
          slider("sfx-volume", prefs.sfx_volume * 100.0f);
          label("sfx-volume-val", std::to_string(int(prefs.sfx_volume * 100 + 0.5f)) + "%");
          label("mute", prefs.mute ? "On" : "Off");
@@ -228,7 +487,7 @@ diff --git a/src/pc/launcher.cpp b/src/pc/launcher.cpp
          slider("scale", prefs.scale * 100.0f);
          label("scale-val", std::to_string(int(prefs.scale * 100 + 0.5f)) + "%");
          label("menu-version", pc::get_app_version());
-@@ -1299,7 +1314,7 @@
+@@ -1299,7 +1371,7 @@ public:
          } else if (id == "mute")
              prefs.mute = !prefs.mute;
          else if (id == "fps")
@@ -237,7 +496,7 @@ diff --git a/src/pc/launcher.cpp b/src/pc/launcher.cpp
          else if (id == "scale") {
              prefs.scale = prefs.scale >= 1.5f ? 0.75f : prefs.scale + 0.25f;
              aurora::rmlui::set_ui_scale(prefs.scale);
-@@ -1375,9 +1390,18 @@
+@@ -1375,9 +1447,18 @@ public:
              return;
          if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
              const auto button = e.gbutton.button;
@@ -259,7 +518,7 @@ diff --git a/src/pc/launcher.cpp b/src/pc/launcher.cpp
              }
              if (!open || binding >= 0)
                  return;  // a bind prompt owns every button
-@@ -1410,6 +1434,12 @@
+@@ -1410,6 +1491,12 @@ public:
              default:
                  break;
              }
@@ -272,7 +531,7 @@ diff --git a/src/pc/launcher.cpp b/src/pc/launcher.cpp
          } else if (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && open && binding < 0) {
              const auto value = e.gaxis.value;
              const auto now = SDL_GetTicks();
-@@ -1515,13 +1545,38 @@
+@@ -1515,13 +1602,38 @@ extern "C" void pc_menu_event(const SDL_Event* event) {
          port_menu.gamepad(*event);
  }
  extern "C" void pc_menu_update(void) {
@@ -316,9 +575,10 @@ diff --git a/src/pc/launcher.cpp b/src/pc/launcher.cpp
              }
          } else if (port_menu.counter->IsVisible())
 diff --git a/src/pc/launcher.h b/src/pc/launcher.h
+index 32c52b8..01776f9 100644
 --- a/src/pc/launcher.h
 +++ b/src/pc/launcher.h
-@@ -12,6 +12,17 @@
+@@ -12,6 +12,17 @@ void pc_menu_update(void);
  void pc_menu_toggle(void);
  void pc_menu_event(const union SDL_Event* event);
  bool pc_menu_is_open(void);
@@ -337,9 +597,10 @@ diff --git a/src/pc/launcher.h b/src/pc/launcher.h
  }
  #endif
 diff --git a/src/pc/launcher_data.cpp b/src/pc/launcher_data.cpp
+index 1dbae9a..79faf6e 100644
 --- a/src/pc/launcher_data.cpp
 +++ b/src/pc/launcher_data.cpp
-@@ -26,6 +26,7 @@
+@@ -26,6 +26,7 @@ static inline int mkstemp(char* tmpl) {
  #endif
  #else
  #include <unistd.h>
@@ -347,7 +608,7 @@ diff --git a/src/pc/launcher_data.cpp b/src/pc/launcher_data.cpp
  #endif
  
  #if defined(__has_include)
-@@ -374,6 +375,13 @@
+@@ -374,6 +375,13 @@ Preferences load_preferences(const std::filesystem::path& path) {
  
  bool save_preferences(
      const std::filesystem::path& path, const Preferences& prefs, std::string& error) {
@@ -361,7 +622,7 @@ diff --git a/src/pc/launcher_data.cpp b/src/pc/launcher_data.cpp
      // A sibling temporary file keeps replacement atomic on the preference filesystem.
      std::string pattern = path.string() + ".XXXXXX";
      int fd = mkstemp(pattern.data());
-@@ -381,6 +389,7 @@
+@@ -381,6 +389,7 @@ bool save_preferences(
          error = "Could not save launcher settings: " + std::string(std::strerror(errno));
          return false;
      }
@@ -369,7 +630,7 @@ diff --git a/src/pc/launcher_data.cpp b/src/pc/launcher_data.cpp
      std::ostringstream text;
      text << "disc " << std::quoted(prefs.disc) << "\nvsync " << prefs.vsync << "\nfullscreen "
           << prefs.fullscreen << "\nscale " << prefs.scale << '\n'
-@@ -409,6 +418,7 @@
+@@ -409,6 +418,7 @@ bool save_preferences(
          ok = false;
      if (close(fd) != 0)
          ok = false;
@@ -377,7 +638,7 @@ diff --git a/src/pc/launcher_data.cpp b/src/pc/launcher_data.cpp
      std::error_code ec;
      if (ok) {
          std::filesystem::rename(pattern, path, ec);
-@@ -418,6 +428,11 @@
+@@ -418,6 +428,11 @@ bool save_preferences(
          std::filesystem::remove(pattern, ec);
          error = "Could not save launcher settings.";
      }
@@ -389,71 +650,3 @@ diff --git a/src/pc/launcher_data.cpp b/src/pc/launcher_data.cpp
      return ok;
  }
  }  // namespace launcher
-diff --git a/src/melee/lb/lb_01F8.c b/src/melee/lb/lb_01F8.c
---- a/src/melee/lb/lb_01F8.c
-+++ b/src/melee/lb/lb_01F8.c
-@@ -61,18 +61,28 @@
-     GXInitTexObj(&lbl_804335B8.tex0, lbl_804335B8.x20, lbl_804335B8.x6C,
-                  lbl_804335B8.x6E, 1, 0, 0, 0);
-     GXInitTexObjLOD(&lbl_804335B8.tex0, 0, 0, 0.0F, 0.0F, 0.0F, 0, 0, 0);
-+#ifdef TARGET_PC
-+    /* Re-decoded into the same buffer every frame: never cache (see lbmthp.c). */
-+    GXInitTexObjNoCache(&lbl_804335B8.tex0, GX_TRUE);
-+#endif
-     GXLoadTexObj(&lbl_804335B8.tex0, 0);
- 
-     /* Second texture - half size */
-     GXInitTexObj(&lbl_804335B8.tex1, lbl_804335B8.x44, (u16) (*pWidth >> 1),
-                  (u16) (*pHeight >> 1), 1, 0, 0, 0);
-     GXInitTexObjLOD(&lbl_804335B8.tex1, 0, 0, 0.0F, 0.0F, 0.0F, 0, 0, 0);
-+#ifdef TARGET_PC
-+    GXInitTexObjNoCache(&lbl_804335B8.tex1, GX_TRUE);
-+#endif
-     GXLoadTexObj(&lbl_804335B8.tex1, 1);
- 
-     /* Third texture - half size */
-     GXInitTexObj(&lbl_804335B8.tex2, lbl_804335B8.x68, (u16) (*pWidth >> 1),
-                  (u16) (*pHeight >> 1), 1, 0, 0, 0);
-     GXInitTexObjLOD(&lbl_804335B8.tex2, 0, 0, 0.0F, 0.0F, 0.0F, 0, 0, 0);
-+#ifdef TARGET_PC
-+    GXInitTexObjNoCache(&lbl_804335B8.tex2, GX_TRUE);
-+#endif
-     GXLoadTexObj(&lbl_804335B8.tex2, 2);
- 
-     HSD_SObjLib_803A49E0(gobj, arg1);
-diff --git a/src/melee/lb/lbmthp.c b/src/melee/lb/lbmthp.c
---- a/src/melee/lb/lbmthp.c
-+++ b/src/melee/lb/lbmthp.c
-@@ -647,6 +647,12 @@
-                      GX_CLAMP, GX_CLAMP, 0U);
-         GXInitTexObjLOD(&streamPlayer->unk_178, GX_NEAR, GX_NEAR, 0.0f, 0.0f,
-                         0.0f, 0U, 0U, GX_ANISO_1);
-+#ifdef TARGET_PC
-+        /* Re-decoded into the same buffer every frame: never cache it, or the
-+         * resolve-side object cache serves a stale/mismatched luma-chroma plane
-+         * and the video renders corrupted. */
-+        GXInitTexObjNoCache(&streamPlayer->unk_178, GX_TRUE);
-+#endif
-         GXLoadTexObj(&streamPlayer->unk_178, GX_TEXMAP0);
- 
-         GXInitTexObj(&streamPlayer->unk_198, streamPlayer->unk_54,
-@@ -654,6 +660,9 @@
-                      GX_TF_I8, GX_CLAMP, GX_CLAMP, 0U);
-         GXInitTexObjLOD(&streamPlayer->unk_198, GX_NEAR, GX_NEAR, 0.0f, 0.0f,
-                         0.0f, 0U, 0U, GX_ANISO_1);
-+#ifdef TARGET_PC
-+        GXInitTexObjNoCache(&streamPlayer->unk_198, GX_TRUE);
-+#endif
-         GXLoadTexObj(&streamPlayer->unk_198, GX_TEXMAP1);
- 
-         GXInitTexObj(&streamPlayer->unk_1B8, streamPlayer->unk_58,
-@@ -661,6 +670,9 @@
-                      GX_TF_I8, GX_CLAMP, GX_CLAMP, 0U);
-         GXInitTexObjLOD(&streamPlayer->unk_1B8, GX_NEAR, GX_NEAR, 0.0f, 0.0f,
-                         0.0f, 0U, 0U, GX_ANISO_1);
-+#ifdef TARGET_PC
-+        GXInitTexObjNoCache(&streamPlayer->unk_1B8, GX_TRUE);
-+#endif
-         GXLoadTexObj(&streamPlayer->unk_1B8, GX_TEXMAP2);
- 
-         HSD_SObjLib_803A49E0(gobj, arg1);

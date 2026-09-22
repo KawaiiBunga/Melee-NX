@@ -130,6 +130,22 @@ std::string EnsureGameDataAvailable(const std::string& nroDir) {
         discPath = findCandidateDisc(kDataRoot, rejectReason);
     }
 
+    if (discPath.empty() && melee_nx::disc::isExtractionComplete(kFilesDir)) {
+        // No disc image, but a completed extraction plus the metadata captured
+        // on a prior disc boot can boot on their own. Both files are written
+        // automatically the first time the game runs with the disc present.
+        const std::string meta = std::string(kDataRoot) + "/disc.meta";
+        const std::string boot = std::string(kDataRoot) + "/disc-boot.bin";
+        std::error_code metaEc;
+        if (fs::is_regular_file(meta, metaEc) && fs::is_regular_file(boot, metaEc)) {
+            clearScreen();
+            std::printf("melee-nx -- booting from extracted game data.\n"
+                        "No disc image needed.\n");
+            consoleUpdate(nullptr);
+            return kLooseBootSentinel;
+        }
+    }
+
     if (discPath.empty()) {
         clearScreen();
         std::printf("melee-nx -- game data not found\n\n");
