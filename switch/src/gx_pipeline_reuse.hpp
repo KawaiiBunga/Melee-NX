@@ -21,8 +21,7 @@ bool same_pipeline_config(bool valid, const Config& a, const Config& b) noexcept
 
 // Owned only by the FIFO processor. Fixed capacity, no allocations or whole
 // cache eviction on the draw path; a collision replaces just one slot.
-template <typename Config, typename Info, size_t Capacity>
-class ShaderInfoCache {
+template <typename Config, typename Info, size_t Capacity> class ShaderInfoCache {
     static_assert(Capacity > 0);
     struct Entry {
         Config config;
@@ -30,7 +29,7 @@ class ShaderInfoCache {
     };
     std::array<std::optional<Entry>, Capacity> entries{};
 
-public:
+  public:
     template <typename Build>
     Info get(const Config& config, uint64_t hash, Build&& build, bool& hit) {
         auto& entry = entries[hash % Capacity];

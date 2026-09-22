@@ -1,12 +1,5 @@
 #!/usr/bin/env bash
-# Build Switch graphics dependencies: Dawn (Vulkan/NVK), SDL3, Aurora.
-# Run inside the melee-nx-dawn Docker image (same as kartpad-dawn) with
-# this checkout mounted at /project.
-#
-#   builder/build-graphics.sh [prepare|dawn|sdl|aurora|all]
-#
-# Prereqs: ref/dawn, ref/SDL, ref/melee-pc/extern/aurora must exist.
-# See docs/DEPS.md for exact revisions and clone commands.
+# Build Dawn and SDL; Aurora is built with the game. See BUILDING.md.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/.." && pwd)"
@@ -21,11 +14,7 @@ dawn="$repo/ref/dawn"
 aurora="$repo/ref/melee-pc/extern/aurora"
 dawn_build="$repo/build/dawn-switch"
 
-# SDL variant. "dusklight" is pinned SDL release-3.4.10 plus Dusklight's Switch
-# backend and this port's changes on top; "legacy" is the original 3.4.4 tree,
-# kept as a comparison/fallback artifact (docs/PLAN-CPU-SDL-DUSKLIGHT.md P2).
-# Each variant gets its own source and build root so switching between them
-# never links a library against mismatched headers.
+# Keep separate SDL source/build pairs to avoid mixing libraries and headers.
 sdl_variant="${MELEE_SDL_VARIANT:-dusklight}"
 case "$sdl_variant" in
   dusklight) sdl="$repo/ref/SDL-dusklight"; sdl_build="$repo/build/sdl-switch-dusklight" ;;
@@ -35,13 +24,8 @@ esac
 
 require_file() { [[ -f "$1" ]] || { echo "Required source missing: $1" >&2; exit 66; }; }
 
-# The two SDL patches are one stack, not two independent patches: the Dusklight
-# backend patch adds src/{video,audio,joystick}/switch, and the melee-nx patch
-# edits those same new files. Once the top layer is applied the base no longer
-# reverse-identifies, so reverse-check the top layer and treat the whole stack
-# as done -- the same layering caveat AGENTS.md records for melee-pc. --recount
-# is required: the upstream Dusklight patch's hunk line counts do not match its
-# bodies.
+# The SDL patches form a stack: reverse-check only the top layer.
+# --recount compensates for incorrect hunk counts in the donor patch.
 apply_sdl_stack() {
   local tree="$1"; shift
   local top="${!#}"

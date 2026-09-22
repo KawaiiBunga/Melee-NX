@@ -1,22 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/*
- * A from-scratch C reimplementation of the small slice of the `nod` C ABI
- * (https://github.com/encounter/nod) that melee-pc and aurora's DVD layer
- * actually call. Backed by switch/src/nod/gc_disc.c, a plain-C reader for
- * single-partition, unencrypted GameCube disc images.
- *
- * Why this exists: real `nod` is a Rust crate, and Rust has no official
- * Nintendo Switch/Horizon target. melee-pc always talks to it through this
- * C header, never through Rust internals directly, so a compatible C
- * implementation is a legal, drop-in substitute for this platform. It only
- * covers what a plain NTSC-U GameCube disc needs: no Wii partitions, no
- * WIA/RVZ compression.
- *
- * Struct field names/order and function signatures here match exactly what
- * ref/melee-pc's src/pc sources and extern/aurora's lib/dolphin/dvd sources
- * reference (reverse-engineered from those call sites, not from upstream
- * nod's own headers).
- */
+/* C implementation of the nod interface used by melee-pc and Aurora.
+ * Supports unencrypted GameCube ISO/GCM images; no Wii or compressed formats.
+ * Keep the field layouts and signatures compatible with their call sites. */
 #pragma once
 
 #include <stddef.h>
@@ -81,13 +66,14 @@ typedef struct NodPartitionMeta {
 
 /* Returns the FST index to resume from (normally index + 1; a directory may
  * return its own "next" index to skip the whole subtree). */
-typedef uint32_t (*NodFstCallback)(
-    uint32_t index, NodNodeKind kind, const char* name, uint32_t size, void* user_data);
+typedef uint32_t (*NodFstCallback)(uint32_t index, NodNodeKind kind, const char* name,
+                                   uint32_t size, void* user_data);
 
 NodResult nod_disc_open(const char* path, const void* reserved, NodHandle** out);
-NodResult nod_disc_open_stream(const NodDiscStream* stream, const NodDiscOptions* options, NodHandle** out);
-NodResult nod_disc_open_partition_kind(
-    NodHandle* disc, NodPartitionKind kind, const void* reserved, NodHandle** out);
+NodResult nod_disc_open_stream(const NodDiscStream* stream, const NodDiscOptions* options,
+                               NodHandle** out);
+NodResult nod_disc_open_partition_kind(NodHandle* disc, NodPartitionKind kind, const void* reserved,
+                                       NodHandle** out);
 NodResult nod_disc_header(NodHandle* handle, NodDiscHeader* out);
 NodResult nod_partition_meta(NodHandle* partition, NodPartitionMeta* out);
 NodResult nod_partition_open_file(NodHandle* partition, uint32_t entry_num, NodHandle** out);

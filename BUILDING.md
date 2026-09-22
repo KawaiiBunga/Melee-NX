@@ -1,31 +1,14 @@
 # Building melee-nx
 
-Everything builds inside one Docker container, so the only things you install on
-your own machine are Docker and git.
+The build runs in Docker and produces `build/switch/melee.nro`. Host tools are
+Git, Docker, and Bash; on Windows, run the commands below in Git Bash with
+Docker Desktop running.
 
-> **Read this first:** one dependency — the Mesa/NVK Vulkan driver — is **not**
-> handled by these scripts and is a substantial separate build. There is no way
-> around it today. [Mesa/NVK](#mesanvk) explains why and what your options are.
-> Everything else is two commands.
+Allow roughly 40 GB of disk space and 1–3 hours for the first graphics build.
+Later game builds are usually much shorter. Dependency revisions are recorded
+in [docs/DEPS.md](docs/DEPS.md).
 
----
-
-## 1. What you need
-
-| | |
-|---|---|
-| **Host** | Linux, macOS, or Windows with Git Bash (ships with [Git for Windows](https://git-scm.com/download/win)) |
-| **Docker** | [Docker Desktop](https://www.docker.com/products/docker-desktop/) or `docker.io` |
-| **Disk** | ~40 GB. Dawn alone is large, and the Mesa/NVK tree is ~450 MB built |
-| **Time** | First full build is 1–3 hours depending on cores. Later builds are minutes |
-| **A Switch** | Running [Atmosphère](https://github.com/Atmosphere-NX/Atmosphere) |
-| **A disc image** | Your own Melee dump: NTSC-U 1.02, `GALE01`, SHA-1 `d4e70c064cc714ba8400a849cf299dbd1aa326fc` |
-
-No game code or assets are distributed here. You supply your own disc image.
-
----
-
-## 2. Quick start
+## Get the sources
 
 ```bash
 git clone https://github.com/KawaiiBunga/Melee-NX melee-nx
@@ -33,237 +16,157 @@ cd melee-nx
 bash builder/fetch-deps.sh
 ```
 
-Then get a Mesa/NVK tree (see [below](#mesanvk)) and point at it:
+The fetcher clones pinned Melee, Dawn, and SDL trees into `ref/`. Existing trees
+are left alone, including local edits. Aurora is vendored inside melee-pc.
+
+## Choose the build environment
+
+### Use an existing SDK image
+
+An SDK image contains the compiler toolchain and the built Switch Mesa driver.
+Load a saved image if needed, then select its tag:
 
 ```bash
-export MESA_NVK_ROOT="/path/to/mesa-switch-main"
+docker load -i melee-nx-sdk.tar
+export MELEE_DOCKER_IMAGE=melee-nx-sdk:latest
+unset MESA_NVK_ROOT
 ```
 
-Then build:
+No Mesa checkout is needed on this machine. The repo does not currently provide
+a published SDK download; use an image you have built or received separately.
+
+### Use a toolchain image and an external Mesa build
 
 ```bash
-bash builder/docker.sh image            # build the container (once, ~10 min)
-bash builder/docker.sh graphics all     # Dawn + SDL3 (once, slow)
-bash builder/docker.sh melee all        # apply game patches, configure, build
+bash builder/docker.sh image
+export MESA_NVK_ROOT="/path/to/built/mesa-switch-main"
 ```
 
-The result is `build/switch/melee.nro`.
+`image` builds `melee-nx-build` from the recipe in this repo. Set
+`MELEE_DOCKER_IMAGE` to use another compatible image. The Mesa directory is
+mounted read-only at `/mesa-nvk`; it can live anywhere on the host.
 
-To use more cores: `export MELEE_BUILD_JOBS=8`.
+See [Mesa/NVK](#mesanvk) for the required files. To package this environment for
+future builds or another machine, follow the [SDK guide](switch/docker/README.md).
 
----
-
-## 3. Mesa/NVK
-
-**This is the one hard part.** Read this section rather than skipping it.
-
-melee-nx renders through **Aurora GX → Dawn (WebGPU) → Vulkan → NVK → libnx
-NWindow**. Nintendo ships no Vulkan driver that homebrew can link against, and
-devkitPro's own `switch-mesa` package is EGL/GLES-only — it installs `libEGL.a`
-and `libGLESv2.a` but no `libvulkan.a`. So the Vulkan implementation has to be
-[Mesa's NVK](https://docs.mesa3d.org/drivers/nvk.html), a from-scratch driver
-for the Tegra X1, cross-compiled for Switch.
-
-The catch is that NVK's shader compiler (NAK) is written in Rust, and Rust has
-no `aarch64-none-elf` / Horizon target. Building it needs its own Rust-enabled
-cross toolchain that compiles NAK for `aarch64-unknown-linux-gnu` and bridges
-the ABI mismatch at link time. That is a separate Meson + Rust pipeline, not
-something the build container here does.
-
-### What melee-nx needs from it
-
-Point `MESA_NVK_ROOT` at a Mesa checkout that has the Switch/NVK overlay applied
-**and has been built**. `builder/docker.sh` checks for exactly two things:
-
-- `$MESA_NVK_ROOT/src/nouveau/vulkan/rust_switch_stubs.c`
-- `$MESA_NVK_ROOT/builddir-switch/**/*.a` — the built archive set (`libnvk.a`,
-  `libvulkan.a` and friends, roughly 450 MB)
-
-### How to get one
-
-The working build lives in the sibling project
-[KartPad-NX](https://github.com/KawaiiBunga/Kartpad-NX), under
-`switch/overlays/mesa-switch/`:
+## Build
 
 ```bash
-git clone https://github.com/KawaiiBunga/Kartpad-NX
-cd Kartpad-NX/switch/overlays/mesa-switch
-cat README.md              # read this; it builds its own Rust image first
-bash build-switch.sh
+bash builder/docker.sh graphics all
+bash builder/docker.sh melee all
 ```
 
-That produces `ref/mesa-switch-main/builddir-switch/` inside the KartPad-NX
-checkout, which is what you export:
+`graphics all` applies the graphics patches, then builds Dawn and SDL.
+`melee all` applies the game patches, configures CMake, and builds the NRO.
+Aurora is built with the game.
 
-```bash
-export MESA_NVK_ROOT=/path/to/Kartpad-NX/ref/mesa-switch-main
-```
+After editing only the port sources, use `melee all`. If SDL changes, run
+`graphics prepare` and `graphics sdl` first. Never edit a builder shell script
+while a container is executing it: Bash reads the file incrementally.
 
-If you already have KartPad-NX checked out and built, you are done — just export
-the path; nothing needs to be rebuilt or copied.
-
-Quote the path if it contains spaces. Point to the complete built tree, not an
-old checkout location left behind after moving the project. The wrapper checks
-for `src/nouveau/vulkan/rust_switch_stubs.c` and `builddir-switch/`; linking also
-requires the archives inside that build directory.
-
-**Honest status:** vendoring this into melee-nx so it builds with one command is
-open work. Right now it is a cross-repo dependency, and that is the main thing
-standing between this project and a genuine one-command build.
-
----
-
-## 4. What each step does
-
-| Command | What happens |
+| Command | Purpose |
 |---|---|
-| `fetch-deps.sh` | Clones `ref/melee-pc`, `ref/dawn`, `ref/SDL`, `ref/SDL-dusklight` at pinned revisions. Safe to re-run; existing trees are left alone |
-| `docker.sh image` | Builds the container from `switch/docker/Dockerfile`: devkitA64 GCC + LLVM Clang 19 |
-| `docker.sh graphics prepare` | Applies Dawn, SDL and Aurora patches. Idempotent — patches are reverse-checked first |
-| `docker.sh graphics all` | `prepare`, then builds Dawn and SDL3. The slow one |
-| `docker.sh melee configure` | CMake configure for the NRO |
-| `docker.sh melee build` | Compiles and links `build/switch/melee.nro` |
-| `docker.sh melee all` | Applies game patches, then configures and builds the NRO |
-| `docker.sh shell` | Drops you into the container with everything mounted |
+| `docker.sh image` | Build the compiler toolchain image |
+| `docker.sh sdk-image` | Package that toolchain with an existing Mesa build |
+| `docker.sh graphics prepare` | Apply Dawn, SDL, and Aurora patches |
+| `docker.sh graphics dawn` | Build Dawn |
+| `docker.sh graphics sdl` | Build the selected SDL variant |
+| `docker.sh melee patch` | Apply game patches |
+| `docker.sh melee configure` | Configure the game build |
+| `docker.sh melee build` | Compile and link the configured build |
+| `docker.sh shell` | Open a shell in the selected image |
 
-After the first full build you normally only need:
+Run these through `bash builder/`, as in the examples above. Individual build
+stages assume their prerequisites are already prepared.
 
-```bash
-bash builder/docker.sh melee build
-```
+### Settings
 
-Re-run `graphics prepare` and `melee all` after pulling patch changes. Rebuild
-SDL or Dawn as well when patches change their sources. For a source audit, run
-`python builder/verify-patches.py` (Python 3 required on the host). The September
-21 patch set covers the current GX CPU optimizations and previously uncaptured
-card/texture/movie fixes; there is no need to bypass a failed patch check.
-
-### Why two compilers
-
-The game's C needs GCC's
-`__attribute__((scalar_storage_order("big-endian")))` to read GameCube data
-structures in place — Clang does not implement it. Dawn's C++ needs a compiler
-new enough for C++20/23 against devkitA64's libstdc++-15 headers, which
-devkitPro's bundled Clang is not. So: GCC for C, Clang 19 for C++. See
-`switch/cmake/SwitchGCC.cmake`.
-
-### SDL variants
-
-`MELEE_SDL_VARIANT` picks which SDL tree is used:
-
-| Value | Tree | Notes |
+| Variable | Default | Purpose |
 |---|---|---|
-| `dusklight` (default) | `ref/SDL-dusklight` — SDL 3.4.10 + Dusklight Switch backend | Current default; used by the September 21 hardware-tested build |
-| `legacy` | `ref/SDL` — SDL 3.4.4 | Comparison/fallback tree |
+| `MELEE_DOCKER_IMAGE` | `melee-nx-build:latest` | Image used to run builds |
+| `MELEE_DOCKER_SDK_IMAGE` | `melee-nx-sdk:latest` | Output tag for `sdk-image` |
+| `MESA_NVK_ROOT` | Unset | Optional host Mesa tree; overrides the image's copy |
+| `MELEE_BUILD_JOBS` | `4` | Parallel compile jobs |
+| `MELEE_SDL_VARIANT` | `dusklight` | SDL source and build pair |
 
-It must match between `graphics` and `melee` stages, so set it once:
+The default SDL backend is Dusklight on SDL 3.4.10. `legacy` selects the SDL
+3.4.4 fallback. Keep the variant consistent between graphics and game builds:
 
 ```bash
+export MELEE_BUILD_JOBS=8
 export MELEE_SDL_VARIANT=legacy
+bash builder/docker.sh graphics prepare
 bash builder/docker.sh graphics sdl
-bash builder/docker.sh melee configure
-bash builder/docker.sh melee build
+bash builder/docker.sh melee all
 ```
 
-Each variant has its own build directory, so switching never links a library
-against another variant's headers.
+Each SDL variant has its own build directory. GCC compiles the game C code;
+Clang 19 compiles C++. The [architecture notes](docs/ARCHITECTURE.md) explain the
+compiler and linker constraints.
 
----
+## Mesa/NVK
 
-## 5. Installing on the console
+The Vulkan path needs a built Mesa tree with the Switch/NVK adaptations.
+devkitPro's EGL/GLES libraries do not replace it. The link inputs are:
 
-Copy the NRO and your disc image to the SD card:
+- `src/nouveau/vulkan/rust_switch_stubs.c`, the Rust/newlib compatibility source
+- The archives under `builddir-switch/`, including `libnvk.a` and `libvulkan.a`
+- Any object files referenced by thin archives, at their original relative paths
 
-```
+An SDK image packages these inputs and verifies their SHA-256 checksums during
+image creation. A host tree must provide the same layout; copying only the
+`.a` files is insufficient when some are thin archives.
+
+The existing driver build originated in KartPad-NX. Its recovered overlay is
+not a complete pinned source-build recipe, so cloning that project and running
+one script is not a verified way to reconstruct this driver. Use a known built
+tree or an SDK snapshot. Reproducing the Mesa fork and Rust cross build from
+clean sources remains separate work; see [dependency provenance](docs/DEPS.md#mesa).
+
+## Installing on the console
+
+Use a Nintendo Switch running [Atmosphère](https://github.com/Atmosphere-NX/Atmosphere)
+and your own Melee NTSC-U 1.02 dump (`GALE01`; SHA-1
+`d4e70c064cc714ba8400a849cf299dbd1aa326fc`). Copy:
+
+```text
 sdmc:/switch/melee-nx/melee.nro
 sdmc:/switch/melee-nx/GALE01.iso
 ```
 
-Launch it from the Homebrew Menu. On first run it extracts the game data from
-the disc image into `sdmc:/switch/melee-nx/files/`, which takes a few minutes.
+Launch from the Homebrew Menu. Press **A** to extract to `files/`, **B** to play
+from the disc image, or **+** to exit. Extraction takes several minutes.
 
-Two logs are written next to the NRO and are the first thing to look at when
-something goes wrong:
+Once extraction is complete, boot the game with the image present to capture
+`disc.meta` and `disc-boot.bin`. Keep those files next to the NRO. With the
+completed `files/` directory and both metadata files present, the image can be
+removed from the SD card.
 
-- `melee-nx-boot.log` — early startup, one line per stage
-- `melee-nx-runtime.log` — everything after that, including the build ID, source
-  revisions, patch-set hash, and `PERF` frame-timing lines
+### FTP deployment
 
-### Deploying over FTP
-
-If you run an FTP server on the console (e.g. sys-ftpd), you can skip the SD
-card shuffle. **Always download the file back and compare hashes** — attributing
-a hardware result to the wrong binary costs far more time than the check:
+With an FTP server running on the console:
 
 ```bash
 curl --fail --upload-file build/switch/melee.nro \
   ftp://YOUR_SWITCH_IP:5000/sdmc:/switch/melee-nx/melee.nro
-curl --fail --output /tmp/deployed.nro \
+curl --fail --output build/switch/deployed.nro \
   ftp://YOUR_SWITCH_IP:5000/sdmc:/switch/melee-nx/melee.nro
-sha256sum build/switch/melee.nro /tmp/deployed.nro
+sha256sum build/switch/melee.nro build/switch/deployed.nro
 ```
 
----
+The hashes must match before recording hardware results against this build.
 
-## 6. Current state
+## Troubleshooting
 
-Work in progress, but playable and improving.
+| Symptom | Check |
+|---|---|
+| Docker cannot connect | Start Docker Desktop or the Docker daemon |
+| Mesa/NVK is missing | Select an SDK image or set `MESA_NVK_ROOT` to the built tree |
+| Patch conflict | Inspect `git -C ref/<tree> status`; verify the pinned revision and local edits before continuing |
+| Shell syntax error during a build | If the script was edited mid-run, rerun after all edits are finished |
+| Missing geometry during play | Shader pipelines may still be compiling; inspect `PIPELINES` records in the runtime log |
+| Startup failure | Read `melee-nx-boot.log`, then `melee-nx-runtime.log`, next to the NRO |
+| Out of disk | Inspect `build/` and Docker image usage; preserve tested binaries and captures before removing outputs |
 
-- It boots, reaches the main menu, and plays.
-- Gameplay runs ~36 fps median (up to 60) at 720p on stock clocks with the
-  default `dusklight` variant. A locked 60 is the remaining goal.
-- Audio works but is latent.
-- Rendering can briefly drop geometry while a shader pipeline is still compiling.
-- Match/stage loads can still hitch for a second or two while streaming assets.
-
-`PERF` lines in `melee-nx-runtime.log` report per-second frame timing split into
-`sim` (game logic), `submit` and `wait`; `STAGES` lines break the frame down
-further (`fifo`, `texture`, `alarms`, …). `PIPELINES` lines report how many draws
-were skipped for a not-yet-compiled pipeline. Optional thread-affinity
-experiments are off by default and selected through a `perf.cfg` next to the NRO
-(`affinity main|split|baseline`) for matched hardware comparisons.
-
----
-
-## 7. Troubleshooting
-
-**`MESA_NVK_ROOT is not set`** — see [Mesa/NVK](#mesanvk). There is no default.
-
-**`docker not found on PATH`** — on Windows, run these commands from **Git
-Bash**, not PowerShell or CMD, and make sure Docker Desktop is running.
-
-**`ERROR: patch conflicts with ...`** — a reference tree under `ref/` has drifted
-from the revision a patch was written against, or has local edits. Check
-`git -C ref/<tree> status`. Do not force-apply; the patches are reverse-checked
-first precisely so a conflict is visible rather than silently doubled.
-
-**A build fails with a syntax error in `builder/*.sh` that you cannot reproduce**
-— you edited the script while the container was running it. Bash reads a script
-by byte offset as it executes, so an edit mid-run derails the rest. Re-run.
-
-**Out of disk** — `build/` holds separate Dawn and SDL build trees and the
-unstripped ELF is ~220 MB. `rm -rf build/` is always safe; it only costs time.
-
----
-
-## 8. Layout
-
-```
-builder/
-  fetch-deps.sh        clone pinned reference trees into ref/
-  docker.sh            run a build stage in the container
-  build-graphics.sh    patch trees, build Dawn + SDL3
-  build-melee.sh       configure and build the NRO
-switch/
-  docker/Dockerfile    the build image
-  CMakeLists.txt       top-level Switch build
-  cmake/               toolchain, Dawn options, Dawn/SDL/Aurora imports
-  patches/             every change made to the reference trees (see its README)
-  src/                 NRO entry point, libnx integration, SQLite VFS, disc gate
-ref/                   upstream sources — gitignored, never committed
-build/                 build trees and output — gitignored
-```
-
-Exact dependency revisions and the deployment workflow are in
-[docs/DEPS.md](docs/DEPS.md). Per-patch rationale is in
-[switch/patches/README.md](switch/patches/README.md).
+Do not force failed patch checks or reset reference trees to hide a conflict.
+For source checks and patch maintenance, see [CONTRIBUTING.md](CONTRIBUTING.md).

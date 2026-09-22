@@ -1,5 +1,4 @@
-# CMake initial cache for Switch Dawn build (Vulkan-only, static monolithic).
-# Copied verbatim from KartPad-NX — same Dawn source, same target.
+# Initial cache for a static Vulkan-only Dawn build.
 set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 set(DAWN_BUILD_MONOLITHIC_LIBRARY STATIC CACHE STRING "" FORCE)
 foreach(_option

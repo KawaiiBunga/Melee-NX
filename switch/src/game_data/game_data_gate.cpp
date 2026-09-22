@@ -64,9 +64,7 @@ std::string findCandidateDisc(const fs::path& dir, std::string& outReason) {
     return "";
 }
 
-void clearScreen() {
-    std::printf("\x1b[2J\x1b[1;1H");
-}
+void clearScreen() { std::printf("\x1b[2J\x1b[1;1H"); }
 
 void waitForAnyExit() {
     ensurePad();
@@ -102,19 +100,19 @@ bool onExtractProgress(const melee_nx::disc::ExtractProgress& p, void*) {
     clearScreen();
     std::printf("melee-nx -- Extracting game data\n\n%s\n", p.stage);
     if (p.filesTotal != 0) {
-        std::printf(
-            "Files: %llu / %llu\n", (unsigned long long)p.filesDone, (unsigned long long)p.filesTotal);
+        std::printf("Files: %llu / %llu\n", (unsigned long long)p.filesDone,
+                    (unsigned long long)p.filesTotal);
     }
     if (p.bytesTotal != 0) {
         std::printf("Data:  %llu / %llu MiB\n", (unsigned long long)(p.bytesDone >> 20),
-            (unsigned long long)(p.bytesTotal >> 20));
+                    (unsigned long long)(p.bytesTotal >> 20));
     }
     std::printf("\n+ cancels safely at the next file boundary.\n");
     consoleUpdate(nullptr);
     return !g_extractCanceled;
 }
 
-}  // namespace
+} // namespace
 
 std::string EnsureGameDataAvailable(const std::string& nroDir) {
     std::error_code ec;
@@ -152,12 +150,11 @@ std::string EnsureGameDataAvailable(const std::string& nroDir) {
         if (!rejectReason.empty()) {
             std::printf("Found a disc image, but: %s\n\n", rejectReason.c_str());
         }
-        std::printf(
-            "Place your Super Smash Bros. Melee disc image\n"
-            "(NTSC-U, revision 2 / v1.02, GALE01, .iso or .gcm)\n"
-            "next to melee.nro, or in:\n%s\n\n"
-            "Then relaunch. Press any button to exit.\n",
-            kDataRoot);
+        std::printf("Place your Super Smash Bros. Melee disc image\n"
+                    "(NTSC-U, revision 2 / v1.02, GALE01, .iso or .gcm)\n"
+                    "next to melee.nro, or in:\n%s\n\n"
+                    "Then relaunch. Press any button to exit.\n",
+                    kDataRoot);
         consoleUpdate(nullptr);
         waitForAnyExit();
         return "";
@@ -204,8 +201,8 @@ std::string EnsureGameDataAvailable(const std::string& nroDir) {
     if (result.ok) {
         std::printf("melee-nx -- extraction complete!\n\n");
         std::printf("%llu files, %llu MiB written to:\n%s\n\n",
-            (unsigned long long)result.filesExtracted, (unsigned long long)(result.bytesExtracted >> 20),
-            kFilesDir);
+                    (unsigned long long)result.filesExtracted,
+                    (unsigned long long)(result.bytesExtracted >> 20), kFilesDir);
     } else {
         std::printf("melee-nx -- extraction stopped:\n%s\n\n", result.message.c_str());
         std::printf("Continuing directly from the disc image instead.\n\n");
@@ -222,4 +219,4 @@ std::string EnsureGameDataAvailable(const std::string& nroDir) {
     return discPath;
 }
 
-}  // namespace melee_nx
+} // namespace melee_nx

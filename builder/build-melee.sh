@@ -1,14 +1,5 @@
 #!/usr/bin/env bash
-# Build melee-nx NRO.
-# Run inside the melee-nx-dawn Docker image with this checkout mounted at /project.
-#
-#   builder/build-melee.sh [patch|configure|build|all]
-#
-# Depends on:
-#   - ref/melee-pc         (game source, cloned separately — see docs/DEPS.md)
-#   - build/dawn-switch    (from build-graphics.sh)
-#   - build/sdl-switch     (from build-graphics.sh)
-# Produces: build/switch/melee.nro
+# Patch, configure, and build the NRO. See BUILDING.md for prerequisites.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/.." && pwd)"
@@ -65,10 +56,7 @@ do_patch() {
 do_configure() {
   require_file "$repo/build/dawn-switch/src/dawn/native/libwebgpu_dawn.a"
   require_file "$sdl_build/libSDL3.a"
-  # Mesa/NVK is Switch's only real Vulkan implementation (devkitPro's own
-  # switch-mesa package is EGL/GLES-only) and needs its own Rust-enabled cross
-  # build -- see docs/DEPS.md. Defaults to the path this repo's docker run
-  # invocations bind-mount a prebuilt tree at; override for a different layout.
+  # The Docker wrapper supplies Mesa at /mesa-nvk; direct invocations may override it.
   : "${MESA_NVK_ROOT:=/mesa-nvk}"
   cmake -S "$repo/switch" -B "$build_dir" -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE="$repo/switch/cmake/SwitchGCC.cmake" \

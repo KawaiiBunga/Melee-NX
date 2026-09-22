@@ -1,28 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/*
- * Minimal reader for single-partition, unencrypted GameCube disc images
- * (raw .iso/.gcm — no Wii partition table, no compression). Shared by
- * nod_shim.c (the nod.h-compatible C ABI) and the on-device disc extractor.
- *
- * Layout reference (all fields big-endian, standard since the format was
- * first reverse-engineered ~2003, unchanged since):
- *   0x00        game_id[6]            e.g. "GALE01"
- *   0x06        disc_num       (u8)
- *   0x07        disc_version   (u8)
- *   0x08        audio_streaming(u8)
- *   0x09        audio_stream_buf_size (u8)
- *   0x1C        gcn_magic[4]          0xC2339F3D
- *   0x420       dol_offset     (u32)
- *   0x424       fst_offset     (u32)
- *   0x428       fst_size       (u32)
- * FST: array of 12-byte entries starting at fst_offset. Entry 0 is the
- * implicit root directory (parent/name unused, "next" = total entry count).
- * Entry layout: u8 is_dir; u24 name_offset (into the string table, which
- * starts right after the last entry); u32 (file_offset | parent_index);
- * u32 (file_length | next_index). melee-pc/aurora's DOL_OFFSET_FIELD (0x420)
- * and FST_OFFSET_FIELD (0x424) constants (src/pc/discfont.c) confirm these
- * offsets independently.
- */
+/* Reader for unencrypted GameCube ISO/GCM images. Header integers are
+ * big-endian: magic at 0x1C, DOL offset at 0x420, FST offset/size at 0x424/0x428.
+ * Each 12-byte FST entry stores a directory flag, a 24-bit name offset, and
+ * either file offset/length or parent/next indices. Entry 0 is the root; its
+ * next index gives the entry count. The string table follows the entries. */
 #pragma once
 
 #include <stddef.h>
@@ -45,11 +26,11 @@ typedef struct GcStream {
 
 typedef struct GcFstEntry {
     int is_dir;
-    uint32_t parent_index;  /* directories only */
-    uint32_t next_index;    /* directories only: index after this subtree */
-    uint32_t file_offset;   /* files only: absolute disc offset */
-    uint32_t file_length;   /* files only */
-    char* name;              /* heap-owned, this entry's own name (not a path) */
+    uint32_t parent_index; /* directories only */
+    uint32_t next_index;   /* directories only: index after this subtree */
+    uint32_t file_offset;  /* files only: absolute disc offset */
+    uint32_t file_length;  /* files only */
+    char* name;            /* heap-owned, this entry's own name (not a path) */
 } GcFstEntry;
 
 typedef struct GcDisc {
@@ -95,8 +76,8 @@ int gc_disc_ensure_fst(GcDisc* disc);
  * order). `callback` returns the index to resume from (normally index + 1;
  * see GC_FST_WALK_STOP to abort). Requires gc_disc_ensure_fst() to have
  * succeeded. */
-typedef uint32_t (*GcFstWalkFn)(
-    uint32_t index, int is_dir, const char* name, uint32_t size_or_next, void* user_data);
+typedef uint32_t (*GcFstWalkFn)(uint32_t index, int is_dir, const char* name, uint32_t size_or_next,
+                                void* user_data);
 void gc_disc_walk_fst(GcDisc* disc, GcFstWalkFn callback, void* user_data);
 
 /* Returns the cached main.dol bytes, reading+caching on first call. */

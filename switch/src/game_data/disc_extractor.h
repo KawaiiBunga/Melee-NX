@@ -1,18 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/*
- * Disc extraction driver: user's NTSC-U 1.02 (GALE01) ISO/GCM -> the loose
- * `files/` directory melee-pc's own file_cache.cpp already knows how to read
- * from (src/pc/file_cache.cpp's resolve_loose_path checks `./files` before
- * ever touching the disc). Unlike KartPad-NX's Wii port, there is no `sys/`
- * mirror to write: melee-pc never reads main.dol/fst.bin from loose files,
- * only individual archive files by their disc path, so extraction only needs
- * to reproduce the FST's file tree.
- *
- * Same shape as KartPad-NX's switch/src/runtime/disc_extractor.h (progress
- * struct/callback, staged writes, a completion manifest so a partial
- * extraction never looks "done" on the next launch) minus the Wii
- * encryption/partition-table layers GameCube doesn't have.
- */
+/* Extract the Melee NTSC-U 1.02 FST into the loose-file cache.
+ * Publish a completion manifest only after all files are written. */
 #pragma once
 
 #include <cstdint>
@@ -48,8 +36,8 @@ struct ExtractResult {
  * structure (this must match verbatim what game code passes to DVDOpen/
  * file_cache's loose-path lookup). Returns ok=false with a message on any
  * failure; partial output may exist on disk and a re-run overwrites it. */
-ExtractResult extractGameFiles(
-    const std::string& discPath, const std::string& filesDirOut, const ExtractOptions& opts);
+ExtractResult extractGameFiles(const std::string& discPath, const std::string& filesDirOut,
+                               const ExtractOptions& opts);
 
 /* True only when filesDirOut has a matching, successfully-published
  * completion manifest -- the authoritative "is extraction done" check. */
@@ -59,4 +47,4 @@ bool isExtractionComplete(const std::string& filesDirOut);
  * extracting anything. Used to decide whether to offer extraction at all. */
 bool looksLikeMeleeDisc(const std::string& path, std::string& outReason);
 
-}  // namespace melee_nx::disc
+} // namespace melee_nx::disc

@@ -17,9 +17,7 @@
 
 static char s_last_error[256];
 
-const char* gc_disc_last_error(void) {
-    return s_last_error[0] ? s_last_error : NULL;
-}
+const char* gc_disc_last_error(void) { return s_last_error[0] ? s_last_error : NULL; }
 
 void gc_disc_set_error(const char* message) {
     if (message == NULL) {

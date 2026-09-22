@@ -1,23 +1,13 @@
 #!/usr/bin/env bash
-# Clone the reference source trees melee-nx builds against, at pinned revisions.
-#
-#   builder/fetch-deps.sh          # everything missing
-#   builder/fetch-deps.sh melee-pc # just one
-#
-# All of these land under ref/ and are gitignored — they are upstream sources,
-# never committed here. Re-running is safe: an existing tree is left alone and
-# only reported.
-#
-# This does NOT fetch Mesa/NVK. That one is a separate, substantial build with
-# its own Rust cross toolchain; BUILDING.md explains it.
+# Fetch pinned upstream sources into ref/. Existing trees are left unchanged.
+# Usage: bash builder/fetch-deps.sh [all|melee-pc|dawn|sdl|sdl-legacy|sdl-dusklight]
+# Mesa is supplied separately through the SDK or MESA_NVK_ROOT; see BUILDING.md.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/.." && pwd)"
 cd "$repo"
 
-# Pinned revisions. Change these deliberately: the patches under switch/patches
-# are written against these exact trees, and a drifting upstream is the usual
-# reason a patch stops applying.
+# Patch bases; update these only alongside the corresponding patches.
 MELEE_PC_URL="https://github.com/999sian/melee-pc"
 MELEE_PC_REV="7c9a468f4f8206780c4cd762be1da7772daaeabf"
 

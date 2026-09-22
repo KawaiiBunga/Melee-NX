@@ -1,20 +1,5 @@
-# melee-nx build image: devkitA64 (GCC) + LLVM Clang 19.
-#
-# Why both compilers: the game's C sources need GCC's
-# `__attribute__((scalar_storage_order("big-endian")))`, which Clang does not
-# implement, while Dawn's C++ needs a compiler new enough for C++20/23 against
-# devkitA64's libstdc++-15 headers — devkitPro's bundled Clang is too old and
-# fails several hundred Dawn/Tint translation units on std::ranges, consteval
-# and <format>. So: GCC for C, Clang 19 for C++. See switch/cmake/SwitchGCC.cmake.
-#
-# The base image carries the devkitA64 sysroot (libnx + libstdc++-15) at
-# /opt/devkitpro.
-#
-# Build it with:  bash builder/docker.sh image
-# or directly:    docker build -t melee-nx-build switch/docker
-#
-# This is the same recipe as KartPad-NX's `kartpad-dawn` image; either works,
-# and builder/docker.sh accepts an existing one via MELEE_DOCKER_IMAGE.
+# Reusable Switch toolchain. GCC handles scalar_storage_order; Clang builds Dawn.
+# See README.md for toolchain and Mesa SDK image usage.
 
 FROM devkitpro/devkita64:latest
 
@@ -29,9 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ln -sf /usr/bin/clang++-${LLVM_VERSION} /usr/local/bin/clang++ \
     && rm -rf /var/lib/apt/lists/* /tmp/llvm.sh
 
-# Dawn's code generators run at build time on host python with jinja2 and
-# markupsafe, both already vendored under ref/dawn/third_party — nothing further
-# to install here.
+# Dawn supplies its Python generator dependencies in its source tree.
 
 ENV DEVKITPRO=/opt/devkitpro
 ENV PATH="/usr/local/bin:${PATH}"

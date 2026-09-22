@@ -1,11 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* Implements nod.h (see that file) on top of gc_disc.c. Every NodHandle is a
- * view (offset + length + cursor) over a shared, possibly-not-owned GcDisc:
- * the disc-open calls create the GcDisc and a handle that owns it; partition
- * and per-file handles are extra views over the same GcDisc that free cheaply
- * without touching it. This mirrors real nod's ownership contract closely
- * enough for melee-pc/aurora's actual call patterns (see dvd.cpp/disc_open.c),
- * which is all this shim needs to satisfy. */
+/* Disc handles own the GcDisc. Partition and file handles are borrowed views
+ * with independent cursors and must be freed before their disc handle. */
 #include "nod.h"
 #include "gc_disc.h"
 
@@ -53,7 +48,8 @@ NodResult nod_disc_open(const char* path, const void* reserved, NodHandle** out)
     return NOD_RESULT_OK;
 }
 
-NodResult nod_disc_open_stream(const NodDiscStream* stream, const NodDiscOptions* options, NodHandle** out) {
+NodResult nod_disc_open_stream(const NodDiscStream* stream, const NodDiscOptions* options,
+                               NodHandle** out) {
     (void)options; /* preloader_threads: this shim reads synchronously. */
     if (stream == NULL || out == NULL) {
         return NOD_RESULT_ERR_INVALID;
@@ -78,8 +74,8 @@ NodResult nod_disc_open_stream(const NodDiscStream* stream, const NodDiscOptions
     return NOD_RESULT_OK;
 }
 
-NodResult nod_disc_open_partition_kind(
-    NodHandle* disc, NodPartitionKind kind, const void* reserved, NodHandle** out) {
+NodResult nod_disc_open_partition_kind(NodHandle* disc, NodPartitionKind kind, const void* reserved,
+                                       NodHandle** out) {
     (void)reserved;
     if (disc == NULL || out == NULL) {
         return NOD_RESULT_ERR_INVALID;
@@ -153,7 +149,8 @@ struct FstTrampolineCtx {
     void* user_data;
 };
 
-static uint32_t fst_trampoline(uint32_t index, int is_dir, const char* name, uint32_t size_or_next, void* user_data) {
+static uint32_t fst_trampoline(uint32_t index, int is_dir, const char* name, uint32_t size_or_next,
+                               void* user_data) {
     struct FstTrampolineCtx* ctx = (struct FstTrampolineCtx*)user_data;
     NodNodeKind kind = is_dir ? NOD_NODE_KIND_DIRECTORY : NOD_NODE_KIND_FILE;
     return ctx->callback(index, kind, name, size_or_next, ctx->user_data);
@@ -227,6 +224,4 @@ void nod_free(NodHandle* handle) {
     free(handle);
 }
 
-const char* nod_error_message(void) {
-    return gc_disc_last_error();
-}
+const char* nod_error_message(void) { return gc_disc_last_error(); }

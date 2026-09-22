@@ -1,18 +1,5 @@
-# ── User-supplied game disc (NEVER commit) ────────────────────────────────────
+# User-supplied game data
 /iso/
-
-# ── Build trees and outputs ───────────────────────────────────────────────────
-/build/
-/dist/
-
-# ── Vendored upstream / reference checkouts ──────────────────────────────────
-# Large third-party trees (Dawn, SDL3, Aurora, melee-pc). Reconstruct locally.
-/ref/
-
-# ── Hardware run artifacts ────────────────────────────────────────────────────
-/newest_build_artifacts/
-
-# ── Game data / Nintendo-derived content (defense in depth) ──────────────────
 *.iso
 *.gcm
 *.ciso
@@ -23,7 +10,10 @@
 *.thp
 *.gci
 
-# ── Built homebrew binaries ───────────────────────────────────────────────────
+# Dependencies and build outputs
+/ref/
+/build/
+/dist/
 *.nro
 *.nso
 *.elf
@@ -32,21 +22,21 @@
 *.pfs0
 *.npdm
 
-# ── Caches / logs / scratch ───────────────────────────────────────────────────
+# Captures, caches, and exported SDK images
+/newest_build_artifacts/
 *.log
 *.db
 *.zip
 *.7z
+*.tar
 scratch_*
 /scratchpad/
 /Logs/
 /scratch/
 
-# ── Python ────────────────────────────────────────────────────────────────────
+# Python and editors
 __pycache__/
 *.pyc
-
-# ── OS / editor cruft ────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 desktop.ini
@@ -55,12 +45,13 @@ desktop.ini
 .vscode/
 .idea/
 
-# ── Internal / AI notes (never publish) ──────────────────────────────────────
-# docs/ holds design notes and handoffs kept local; the public docs are the
-# root README.md, BUILDING.md, docs/DEPS.md, and switch/patches/README.md, which
-# stay tracked despite the /docs/ rule because git honors explicit tracking.
+# Public documentation is allowlisted; local handoffs remain private.
+/docs/*
+!/docs/README.md
+!/docs/DEPS.md
+!/docs/ARCHITECTURE.md
+!/docs/CLEANUP.md
 /memory/
-/docs/
 .claude/
 /AGENTS.md
 /CLAUDE.md

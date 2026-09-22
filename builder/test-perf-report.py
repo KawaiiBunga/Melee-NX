@@ -49,6 +49,44 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(result["skipped_draws"], 42)
         self.assertEqual(result["perf_samples"], 1)
 
+    def test_padded_timestamp_and_nul_gap(self):
+        result = self.parse("\0\0[   12.500] PERF fps 60 frame 16.7ms\n")
+        self.assertEqual(result["perf_samples"], 1)
+        self.assertEqual(result["capture_integrity"]["nul_bytes"], 2)
+
+    def test_weighted_cache_diagnostics_and_partial_lines(self):
+        result = self.parse("""[2000] BLOBCACHE hits 9 misses 1 lookups 19 avg_lookup_ms 10
+[4000] BLOBCACHE hits 1 misses 1 lookups 3 avg_lookup_ms 30
+[4100] BLOBCACHE hits 12
+[4200] FRAMES n 12
+[4300] GXCPU same_pipeline 10 shader_info_hits 9 shader_info_misses 1 over 120 frames
+[4400] PIPELINES skipped_draws 0 created 2 avg_create_ms 100
+[4500] PIPELINES skipped_draws 0 created 1 avg_create_ms 400
+""")
+        self.assertAlmostEqual(result["blob_cache"]["weighted_mean_lookup_ms"], 280 / 22)
+        self.assertAlmostEqual(result["blob_cache"]["hit_rate"], 10 / 12)
+        self.assertEqual(result["pipeline_creation"]["weighted_mean_ms"], 200)
+        self.assertEqual(result["gx_cpu"]["shader_info_hit_rate"], .9)
+        self.assertEqual(result["capture_integrity"]["partial_or_legacy_blob_records"], 1)
+        self.assertNotIn("frame_totals", result)
+
+    def test_worker_cache_and_log_windows(self):
+        result = self.parse("""[1000] LOGIO bytes 10 dropped_records 9 errors 0 write_ms 1 flush_ms 2
+[2000] FIFOWORK frames 120 process_ms 10 buffer_wait_ms 1 drain_ms 6 grows 1 batches 500 bytes 1234
+[3000] FIFOWORK frames 60 process_ms 4 buffer_wait_ms 0 drain_ms 1 grows 2 batches 250 bytes 4321
+[3001] RENDERWORK frames 120 begin_ms 1 encode_ms 2 end_ms 3 sync_ms 0 passes 5
+[3002] RENDERSTAGES frames 120 acquire_ms 0.1 finalize_ms 0.2 submit_ms 1 present_ms 0.5
+[3100] BLOBCACHE hits 10 misses 2 lookups 22 avg_lookup_ms 2 ram_hits 12 sql_reads 10 ram_kb 200 evictions 4 avg_lock_ms 0.1
+[3200] LOGIO bytes 100 dropped_records 2 errors 1 write_ms 3 flush_ms 4
+""", 2, 4)
+        self.assertEqual(result["fifowork"]["weighted_mean_ms"]["process_ms"], 8)
+        self.assertEqual(result["fifowork"]["counts"]["grows"], 3)
+        self.assertEqual(result["renderstages"]["weighted_mean_ms"]["submit_ms"], 1)
+        self.assertEqual(result["blob_cache"]["ram_hit_callbacks"], 12)
+        self.assertAlmostEqual(result["blob_cache"]["weighted_mean_lock_ms"], .1)
+        self.assertEqual(result["log_io"]["dropped_records"], 2)
+        self.assertEqual(result["log_io"]["errors"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

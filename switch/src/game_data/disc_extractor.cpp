@@ -32,7 +32,7 @@ bool readHeaderFields(GcDisc* disc, std::string& gameId, uint8_t& discNum, uint8
     return true;
 }
 
-}  // namespace
+} // namespace
 
 bool looksLikeMeleeDisc(const std::string& path, std::string& outReason) {
     GcDisc* disc = gc_disc_open_path(path.c_str());
@@ -46,9 +46,10 @@ bool looksLikeMeleeDisc(const std::string& path, std::string& outReason) {
     gc_disc_close(disc);
 
     if (gameId != "GALE01") {
-        outReason = (gameId.rfind("GAL", 0) == 0)
-                         ? "This region/game is not supported. Choose Melee USA revision 2 (NTSC-U 1.02)."
-                         : "Wrong game. Choose Super Smash Bros. Melee USA revision 2.";
+        outReason =
+            (gameId.rfind("GAL", 0) == 0)
+                ? "This region/game is not supported. Choose Melee USA revision 2 (NTSC-U 1.02)."
+                : "Wrong game. Choose Super Smash Bros. Melee USA revision 2.";
         return false;
     }
     if (discVersion != 2 || discNum != 0) {
@@ -82,7 +83,8 @@ struct CountCtx {
     uint64_t bytes = 0;
 };
 
-uint32_t countCallback(uint32_t index, int is_dir, const char* /*name*/, uint32_t sizeOrNext, void* userData) {
+uint32_t countCallback(uint32_t index, int is_dir, const char* /*name*/, uint32_t sizeOrNext,
+                       void* userData) {
     auto* ctx = static_cast<CountCtx*>(userData);
     if (!is_dir) {
         ctx->files++;
@@ -119,7 +121,8 @@ bool reportProgress(ExtractCtx& ctx, const char* stage) {
  * extraction path. */
 uint8_t s_chunkBuf[kChunkSize];
 
-bool extractOneFile(ExtractCtx& ctx, uint32_t entryIndex, const fs::path& fullPath, uint32_t fileOffsetBase, uint64_t length) {
+bool extractOneFile(ExtractCtx& ctx, uint32_t entryIndex, const fs::path& fullPath,
+                    uint32_t fileOffsetBase, uint64_t length) {
     fs::path tmpPath = fullPath;
     tmpPath += ".part";
 
@@ -161,7 +164,8 @@ bool extractOneFile(ExtractCtx& ctx, uint32_t entryIndex, const fs::path& fullPa
     }
 
     std::error_code ec;
-    fs::remove(fullPath, ec); /* rename() over an existing file is platform-dependent; clear first */
+    fs::remove(fullPath,
+               ec); /* rename() over an existing file is platform-dependent; clear first */
     fs::rename(tmpPath, fullPath, ec);
     if (ec) {
         ctx.failMessage = "Could not finalize " + fullPath.string();
@@ -170,7 +174,8 @@ bool extractOneFile(ExtractCtx& ctx, uint32_t entryIndex, const fs::path& fullPa
     return true;
 }
 
-uint32_t extractCallback(uint32_t index, int is_dir, const char* name, uint32_t sizeOrNext, void* userData) {
+uint32_t extractCallback(uint32_t index, int is_dir, const char* name, uint32_t sizeOrNext,
+                         void* userData) {
     auto* ctx = static_cast<ExtractCtx*>(userData);
     if (ctx->failed || ctx->canceled) {
         return GC_FST_WALK_STOP;
@@ -207,10 +212,10 @@ uint32_t extractCallback(uint32_t index, int is_dir, const char* name, uint32_t 
     return index + 1;
 }
 
-}  // namespace
+} // namespace
 
-ExtractResult extractGameFiles(
-    const std::string& discPath, const std::string& filesDirOut, const ExtractOptions& opts) {
+ExtractResult extractGameFiles(const std::string& discPath, const std::string& filesDirOut,
+                               const ExtractOptions& opts) {
     ExtractResult result;
 
     std::string reason;
@@ -225,7 +230,8 @@ ExtractResult extractGameFiles(
         return result;
     }
     if (!gc_disc_ensure_fst(disc)) {
-        result.message = gc_disc_last_error() ? gc_disc_last_error() : "Could not read the disc's file table.";
+        result.message =
+            gc_disc_last_error() ? gc_disc_last_error() : "Could not read the disc's file table.";
         gc_disc_close(disc);
         return result;
     }
@@ -293,4 +299,4 @@ ExtractResult extractGameFiles(
     return result;
 }
 
-}  // namespace melee_nx::disc
+} // namespace melee_nx::disc

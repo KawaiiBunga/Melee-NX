@@ -1,0 +1,7 @@
+ARG TOOLCHAIN_IMAGE=melee-nx-build:latest
+FROM ${TOOLCHAIN_IMAGE}
+
+COPY mesa-nvk/ /mesa-nvk/
+RUN cd /mesa-nvk && sha256sum --check SHA256SUMS
+
+ENV MESA_NVK_ROOT=/mesa-nvk

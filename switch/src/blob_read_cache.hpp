@@ -18,7 +18,8 @@ class BlobReadCache {
     std::list<Entry> entries_;
     size_t bytes_ = 0, budget_, limit_;
     uint64_t evictions_ = 0;
-public:
+
+  public:
     explicit BlobReadCache(size_t budget = 16 * 1024 * 1024, size_t limit = 512)
         : budget_(budget), limit_(limit) {}
     bool accepts(size_t keySize, size_t dataSize) const {
@@ -41,14 +42,16 @@ public:
             if (it->low == low && it->high == high) {
                 bytes_ -= it->key.size() + it->data.size();
                 it = entries_.erase(it);
-            } else ++it;
+            } else
+                ++it;
         }
     }
     template <class Fill>
-    const std::vector<uint8_t>* fill(uint64_t low, uint64_t high, const void* key,
-                                   size_t keySize, size_t dataSize, Fill&& decode) {
+    const std::vector<uint8_t>* fill(uint64_t low, uint64_t high, const void* key, size_t keySize,
+                                     size_t dataSize, Fill&& decode) {
         invalidate(low, high);
-        if (!accepts(keySize, dataSize)) return nullptr;
+        if (!accepts(keySize, dataSize))
+            return nullptr;
         const size_t needed = keySize + dataSize;
         while (entries_.size() >= limit_ || bytes_ > budget_ - needed) {
             bytes_ -= entries_.back().key.size() + entries_.back().data.size();
@@ -56,13 +59,18 @@ public:
             ++evictions_;
         }
         Entry entry{low, high, std::vector<uint8_t>(keySize), std::vector<uint8_t>(dataSize)};
-        if (keySize) std::memcpy(entry.key.data(), key, keySize);
-        if (!decode(entry.data.data(), dataSize)) return nullptr;
+        if (keySize)
+            std::memcpy(entry.key.data(), key, keySize);
+        if (!decode(entry.data.data(), dataSize))
+            return nullptr;
         entries_.push_front(std::move(entry));
         bytes_ += needed;
         return &entries_.front().data;
     }
-    void clear() { entries_.clear(); bytes_ = 0; }
+    void clear() {
+        entries_.clear();
+        bytes_ = 0;
+    }
     size_t bytes() const { return bytes_; }
     size_t size() const { return entries_.size(); }
     uint64_t evictions() const { return evictions_; }

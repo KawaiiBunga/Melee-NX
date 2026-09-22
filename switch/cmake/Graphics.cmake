@@ -1,5 +1,4 @@
-# Graphics.cmake — wire prebuilt Switch Dawn, SDL3, and Aurora into the melee build.
-# Mirrors KartPad-NX's Graphics.cmake exactly; only path roots differ.
+# Import Dawn and SDL, then build Aurora and the Switch platform adapters.
 include_guard(GLOBAL)
 
 get_filename_component(_repo "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
@@ -38,14 +37,7 @@ set_target_properties(SDL3::SDL3-static PROPERTIES
   IMPORTED_LOCATION "${MELEE_SDL_BUILD}/libSDL3.a"
   INTERFACE_INCLUDE_DIRECTORIES "${MELEE_SDL_SOURCE}/include")
 
-# ── nod (disc reading) ────────────────────────────────────────────────────────
-# Real `nod` is a Rust crate (github.com/encounter/nod); Rust has no official
-# Switch/Horizon target. switch/src/nod/ is a from-scratch C reimplementation
-# of the small slice of nod's C ABI melee-pc/aurora actually call (see
-# nod_shim.c), backed by a plain-C single-partition GameCube disc reader
-# (gc_disc.c). Predefining nod::nod here (same trick as Dawn/SDL3 above) makes
-# AuroraNodProvider.cmake's "system" branch use it instead of trying to
-# FetchContent+Corrosion the real crate.
+# C GameCube disc adapter, exposed through Aurora's nod provider.
 add_library(nod_shim STATIC
   "${CMAKE_CURRENT_LIST_DIR}/../src/nod/gc_disc.c"
   "${CMAKE_CURRENT_LIST_DIR}/../src/nod/nod_shim.c")
@@ -72,7 +64,7 @@ set(TRACY_ENABLE OFF CACHE BOOL "" FORCE)
 
 add_subdirectory("${MELEE_AURORA_SOURCE}" aurora)
 
-# Lets dvd.cpp/pipeline_cache.cpp reach switch_io_lock.h (see that header's comment).
+# Expose the shared Switch integration headers to Aurora.
 target_include_directories(aurora_dvd PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../src")
 target_include_directories(aurora_gx PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../src")
 target_include_directories(aurora_core PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../src")
@@ -87,16 +79,9 @@ if(TARGET TracyClient)
     endif()
   endforeach()
 
-  # Tracy's own platform detection doesn't know __SWITCH__ and hard #errors
-  # (GetThreadHandleImpl) or reaches for getlogin_r (unavailable on newlib).
-  # TRACY_ENABLE is OFF, so these values are never read at runtime -- unlike
-  # ref/dawn/ref/SDL/melee-pc's extern/aurora, Tracy is FetchContent'd fresh
-  # into the build tree each configure, so it's patched here with plain
-  # `patch` (idempotent via -N) instead of through apply_patch_once/git apply.
+  # FetchContent supplies Tracy in the build tree; apply its platform guards there.
   find_program(_melee_patch_exe patch REQUIRED)
-  # tracy_SOURCE_DIR is set deep inside aurora's own add_subdirectory() scope
-  # and never propagates up here, so this is FetchContent's well-known default
-  # layout (${CMAKE_BINARY_DIR}/_deps/<name>-src) spelled out explicitly.
+  # The nested FetchContent source directory is not exported into this scope.
   set(_melee_tracy_src "${CMAKE_BINARY_DIR}/_deps/tracy-src")
   if(EXISTS "${_melee_tracy_src}/public/common/TracySystem.cpp")
     execute_process(
@@ -140,21 +125,7 @@ if(TARGET sqlite3)
   target_compile_features(sqlite3 PRIVATE cxx_std_17)
 endif()
 
-# ── Vulkan driver (Mesa NVK) ─────────────────────────────────────────────────
-# Dawn's Vulkan backend needs a real Vulkan implementation to resolve
-# vkGetInstanceProcAddr against; devkitPro's own switch-mesa package (installed
-# in this container) is EGL/GLES-only (libEGL.a/libGLESv2.a, no libvulkan.a) --
-# actual Switch Vulkan comes only from NVK, Mesa's from-scratch driver for the
-# Tegra X1 written partly in Rust (NAK, its shader compiler backend). Building
-# NVK from source needs its own Rust-enabled cross toolchain (see KartPad-NX's
-# switch/overlays/mesa-switch/, which builds it via a separate Docker image
-# with rustup targeting aarch64-unknown-linux-gnu, since Rust has no Horizon/
-# aarch64-none-elf target -- the same fundamental gap `nod`/switch/src/nod hit,
-# solved there by cross-targeting Linux and bridging the ABI mismatch at link
-# time instead of by rewriting NAK/NVK from scratch, which is well out of
-# scope here). Reusing that already-built output (~436 MB of cross-compiled
-# archives at MESA_NVK_ROOT/builddir-switch) is far faster than reproducing
-# the whole Rust/Meson pipeline for this port too.
+# Mesa Vulkan archives and the Rust/newlib ABI bridge.
 set(MESA_NVK_ROOT "" CACHE PATH
   "Mesa/NVK Switch cross-build root (has builddir-switch/**/*.a and src/nouveau/vulkan/rust_switch_stubs.c) -- see docs/DEPS.md")
 if(MESA_NVK_ROOT STREQUAL "")

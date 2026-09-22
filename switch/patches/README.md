@@ -1,46 +1,75 @@
-# switch/patches
+# Patch catalog
 
-Patches applied idempotently by `builder/build-graphics.sh` and `builder/build-melee.sh`.
+The build scripts reverse-check patches before applying them. Source pins are
+in [the dependency guide](../../docs/DEPS.md); the maintenance workflow is in
+[CONTRIBUTING.md](../../CONTRIBUTING.md).
 
-| File | Tree | Purpose |
-|------|------|---------|
-| `dawn-switch-libnx.patch` | `ref/dawn` | libnx platform shim, NWindow surface type |
-| `dawn-abseil-switch.patch` | `ref/dawn/third_party/abseil-cpp` | POSIX guards for newlib |
-| `dawn-switch-surface.patch` | `ref/dawn` | Adds `SurfaceSourceSwitchNativeWindow` + `VK_NN_vi_surface` Vulkan surface creation |
-| `dawn-switch-renderdoc.patch` | `ref/dawn` | `third_party/renderdoc`'s vendored header `#error`s on any platform it doesn't recognize; adds `__SWITCH__` alongside Linux/BSD (empty calling convention) |
-| `sdl-switch-external-graphics.patch` | `ref/SDL` | External-graphics mode (no EGL ownership) for the legacy SDL 3.4.4 tree (`MELEE_SDL_VARIANT=legacy`) |
-| `sdl-dusklight-switch.patch` | `ref/SDL-dusklight` | Dusklight's Switch backend for pinned SDL `release-3.4.10`, copied verbatim from `dusklight-nx/platforms/switch/patches/sdl3-switch.patch` |
-| `sdl-dusklight-melee-nx.patch` | `ref/SDL-dusklight` | melee-nx's layer on that backend: external-graphics mode, four-player pad enumeration with per-device state and analog triggers, sideways single Joy-Con support (single-Joy-Con styles + horizontal hold, SL/SR→L/R), audren open/close error handling and short-buffer padding |
-| `aurora-switch-surface.patch` | `ref/melee-pc/extern/aurora` | Constructs `SurfaceSourceSwitchNativeWindow` from `nwindowGetDefault()` in `BackendBinding.cpp` |
-| `aurora-switch-dawn-backends.patch` | `ref/melee-pc/extern/aurora` | Declares Vulkan-only `DAWN_ENABLE_*` for `CMAKE_SYSTEM_NAME=NintendoSwitch`; forces present mode to Fifo on Switch for bring-up |
-| `aurora-switch-platform-compat.patch` | `ref/melee-pc/extern/aurora` | Preserves the recovered snapshot's AArch64 math and THP compatibility changes |
-| `aurora-switch-no-backtrace.patch` | `ref/melee-pc/extern/aurora` | Disables unsupported host backtrace integration on Switch |
-| `aurora-switch-no-mmap.patch` | `ref/melee-pc/extern/aurora` | Replaces unsupported mmap-dependent behavior for Horizon/newlib; also the DVD loose-disc backend that boots from a `files/` extraction with no disc image (`CommandDataLoose`, `aurora_dvd_open_files`/`aurora_dvd_save_meta`) |
-| `aurora-switch-io-atomic.patch` | `ref/melee-pc/extern/aurora` | Atomic file write (`io.cpp`) falls back past Horizon/sdmc rename and `O_EXCL` failures so controller/keyboard bindings and other atomic writes actually persist |
-| `aurora-switch-pad-trigger-bind.patch` | `ref/melee-pc/extern/aurora` | Lets an analog trigger (reported by SDL as an axis) drive a digital GC button, so GC Z can bind to the ZL/ZR triggers (`pad.cpp`) |
-| `aurora-switch-mem1-window.patch` | `ref/melee-pc/extern/aurora` | Makes Aurora resolve Melee's 32-bit disc-pointer slots through the MEM1 4 GiB window |
-| `aurora-switch-encoder-state-cache.patch` | `ref/melee-pc/extern/aurora` | Dusklight-derived render-pass-scoped suppression of redundant texture bind-group and destination-alpha blend-constant calls |
-| `aurora-switch-cache-recovery.patch` | `ref/melee-pc/extern/aurora` | Descriptor-cache recovery/I/O lock, adaptive compiler pacing, optional second worker, in-flight request tracking/write deduplication, pipeline telemetry |
-| `aurora-switch-blob-cache-batch.patch` | `ref/melee-pc/extern/aurora` | Dawn cache recovery, batched writes, flush API declarations, hit/miss and callback timing telemetry |
-| `aurora-switch-texture-telemetry.patch` | `ref/melee-pc/extern/aurora` | Stable texture identity/content checks, dynamic-texture cache bypass, `TEXSTATS` and end-frame timing |
-| `aurora-switch-perf-imgui.patch` | `ref/melee-pc/extern/aurora` | ImGui pass reuse, Dawn status compatibility, flush API implementation and end-frame stage timers |
-| `aurora-switch-gx-cpu.patch` | `ref/melee-pc/extern/aurora` | Dusklight-derived redundant effective-state suppression and bounded exact-key shader analysis; preserves movie texture dirtiness; `GXCPU` counters |
-| `aurora-switch-runtime-fixes.patch` | `ref/melee-pc/extern/aurora` | Previously uncaptured card-probe TTL, stable texture IDs and no-cache texture API/metadata |
-| `aurora-switch-thread-sweep.patch` | `ref/melee-pc/extern/aurora` | Connects named thread setup to the optional Switch affinity sweep |
-| `melee-switch-gcc-compat.patch` | `ref/melee-pc` | Launcher/resource/file-cache compatibility, recovered audio changes and negotiated-device telemetry; also ISO-free boot wiring (`launcher.cpp` loose sentinel + metadata capture) and `discfont.c` DOL save/restore |
-| `melee-switch-disc-ptr-window.patch` | `ref/melee-pc` | Adds MEM1-window pointer encoding/resolution and converts raw disc-slot casts to `DP()` |
-| `melee-switch-input-worker.patch` | `ref/melee-pc` | Avoids creating an unused auxiliary SDL input worker on Switch; `PADRead` remains on the main thread |
-| `melee-switch-perf-telemetry.patch` | `ref/melee-pc` | Entry-point rename, Switch startup/log sink, OS compatibility and frame/alarms/retrace telemetry |
-| `tracy-switch-platform.patch` | fetched Tracy source | Switch platform guards for the optional Tracy dependency |
+## Dawn
 
-Patches are adapted from the proven KartPad-NX set (dawn/sdl) where the underlying
-tree is identical. **The three `aurora-*` and `melee-switch-gcc-compat` patches were
-rewritten from scratch for this project** — melee-pc vendors its own aurora fork at a
-different point than KartPad-NX's aurora checkout (different namespace style, a
-simpler `create_window()`, and Dawn API shapes that had already moved past what
-KartPad's patches were written against), so KartPad's originals did not apply and in
-two cases (`aurora-switch-dawn-api.patch`, `aurora-switch-window.patch`'s window.cpp
-hunks) turned out to be unnecessary here.
+`ref/dawn`; the Abseil patch targets `third_party/abseil-cpp`.
+
+| Patch | Purpose |
+|---|---|
+| [dawn-switch-libnx.patch](dawn-switch-libnx.patch) | libnx platform shim, NWindow surface type |
+| [dawn-abseil-switch.patch](dawn-abseil-switch.patch) | POSIX guards for newlib |
+| [dawn-switch-surface.patch](dawn-switch-surface.patch) | Adds `SurfaceSourceSwitchNativeWindow` + `VK_NN_vi_surface` Vulkan surface creation |
+| [dawn-switch-renderdoc.patch](dawn-switch-renderdoc.patch) | Allow the Switch platform in the vendored RenderDoc header |
+
+## SDL
+
+Dusklight patches target `ref/SDL-dusklight`; the legacy patch targets `ref/SDL`.
+
+| Patch | Purpose |
+|---|---|
+| [sdl-switch-external-graphics.patch](sdl-switch-external-graphics.patch) | External-graphics mode (no EGL ownership) for the legacy SDL 3.4.4 tree (`MELEE_SDL_VARIANT=legacy`) |
+| [sdl-dusklight-switch.patch](sdl-dusklight-switch.patch) | Dusklight Switch video, audio, and joystick backend |
+| [sdl-dusklight-melee-nx.patch](sdl-dusklight-melee-nx.patch) | External graphics, four-player input, analog triggers, sideways Joy-Cons, and audio handling |
+
+## Aurora
+
+`ref/melee-pc/extern/aurora`.
+
+| Patch | Purpose |
+|---|---|
+| [aurora-switch-surface.patch](aurora-switch-surface.patch) | Constructs `SurfaceSourceSwitchNativeWindow` from `nwindowGetDefault()` in `BackendBinding.cpp` |
+| [aurora-switch-dawn-backends.patch](aurora-switch-dawn-backends.patch) | Vulkan-only backend selection and Fifo presentation |
+| [aurora-switch-platform-compat.patch](aurora-switch-platform-compat.patch) | Preserves the recovered snapshot's AArch64 math and THP compatibility changes |
+| [aurora-switch-no-backtrace.patch](aurora-switch-no-backtrace.patch) | Disables unsupported host backtrace integration on Switch |
+| [aurora-switch-no-mmap.patch](aurora-switch-no-mmap.patch) | Horizon file access and the extracted-data DVD backend |
+| [aurora-switch-io-atomic.patch](aurora-switch-io-atomic.patch) | Horizon rename and exclusive-create fallbacks for persistent settings |
+| [aurora-switch-pad-trigger-bind.patch](aurora-switch-pad-trigger-bind.patch) | Allow analog triggers to bind digital GameCube buttons |
+| [aurora-switch-mem1-window.patch](aurora-switch-mem1-window.patch) | Makes Aurora resolve Melee's 32-bit disc-pointer slots through the MEM1 4 GiB window |
+| [aurora-switch-encoder-state-cache.patch](aurora-switch-encoder-state-cache.patch) | Reuse texture bind groups and destination-alpha blend constants within a render pass |
+| [aurora-switch-cache-recovery.patch](aurora-switch-cache-recovery.patch) | Descriptor recovery, compiler pacing, in-flight request tracking, persistence, and telemetry |
+| [aurora-switch-blob-cache-batch.patch](aurora-switch-blob-cache-batch.patch) | Dawn cache recovery, batched writes, decoded blob reuse, and lookup telemetry |
+| [aurora-switch-texture-telemetry.patch](aurora-switch-texture-telemetry.patch) | Stable texture identity/content checks, dynamic-texture cache bypass, `TEXSTATS` and end-frame timing |
+| [aurora-switch-perf-imgui.patch](aurora-switch-perf-imgui.patch) | ImGui pass reuse, Dawn status compatibility, cache flushing, and frame stage timers |
+| [aurora-switch-gx-cpu.patch](aurora-switch-gx-cpu.patch) | Dusklight-derived redundant effective-state suppression and bounded exact-key shader analysis; preserves movie texture dirtiness; `GXCPU` counters |
+| [aurora-switch-runtime-fixes.patch](aurora-switch-runtime-fixes.patch) | Card-probe TTL, stable texture IDs, and no-cache texture metadata |
+| [aurora-switch-thread-sweep.patch](aurora-switch-thread-sweep.patch) | Connects named thread setup to the optional Switch affinity sweep |
+
+## Melee
+
+`ref/melee-pc`.
+
+| Patch | Purpose |
+|---|---|
+| [melee-switch-gcc-compat.patch](melee-switch-gcc-compat.patch) | Platform and launcher compatibility, file cache, audio, and extracted-data boot wiring |
+| [melee-switch-disc-ptr-window.patch](melee-switch-disc-ptr-window.patch) | Adds MEM1-window pointer encoding/resolution and converts raw disc-slot casts to `DP()` |
+| [melee-switch-input-worker.patch](melee-switch-input-worker.patch) | Avoids creating an unused auxiliary SDL input worker on Switch; `PADRead` remains on the main thread |
+| [melee-switch-perf-telemetry.patch](melee-switch-perf-telemetry.patch) | Entry-point rename, shared logging, OS compatibility, and frame telemetry |
+
+## Build dependencies
+
+Tracy is fetched into the build directory and patched by `Graphics.cmake`.
+
+| Patch | Purpose |
+|---|---|
+| [tracy-switch-platform.patch](tracy-switch-platform.patch) | Switch platform guards for the optional Tracy dependency |
+
+Dawn and legacy SDL integration derive from KartPad-NX. Melee and Aurora
+patches target melee-pc's vendored sources and cannot be replaced directly with
+patches for another Aurora revision.
 
 ## SDL patch stack
 
@@ -54,14 +83,12 @@ bodies. Regenerate the melee-nx layer by reading `release-3.4.10` into a
 scratch index, `git apply --cached --recount` the Dusklight patch, then
 `git diff` the worktree against that index.
 
-## Reconstructed patch ownership (2026-09-21)
+## Ownership and verification
 
-The Melee/Aurora patches now own disjoint files against melee-pc revision
-`7c9a468f4f8206780c4cd762be1da7772daaeabf`. They preserve the current
-hardware-tested source state, including previously uncaptured September 20
-card/texture/movie and compiler/cache edits. Verification covers 20 patches
-and 74 Melee/Aurora files, plus the SDL stack. The old status and pipeline-I/O patches are absorbed into the owning
-patches above. `build-graphics.sh` applies the profiler patch as well.
+The Melee/Aurora patches own disjoint files against melee-pc revision
+`7c9a468f4f8206780c4cd762be1da7772daaeabf`. Verification covers 20 patches
+and 74 Melee/Aurora files, plus the 19-file SDL stack. Keep each file's changes
+in its owning patch.
 
 Aurora patch paths are relative to `extern/aurora`; Melee patch paths are
 relative to melee-pc. Git must run from its actual repository root with an

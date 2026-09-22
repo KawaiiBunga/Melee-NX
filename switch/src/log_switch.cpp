@@ -32,8 +32,10 @@ void init_clock() { clockStart = now_ns(); }
 bool write_all(const char* data, size_t length) {
     while (length) {
         const ssize_t n = write(STDOUT_FILENO, data, length);
-        if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) return false;
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n <= 0)
+            return false;
         data += n;
         length -= size_t(n);
     }
@@ -53,7 +55,10 @@ void* writer(void*) {
             timespec deadline{};
             clock_gettime(CLOCK_REALTIME, &deadline);
             deadline.tv_nsec += 100000000;
-            if (deadline.tv_nsec >= 1000000000) { ++deadline.tv_sec; deadline.tv_nsec -= 1000000000; }
+            if (deadline.tv_nsec >= 1000000000) {
+                ++deadline.tv_sec;
+                deadline.tv_nsec -= 1000000000;
+            }
             pthread_cond_timedwait(&wake, &mutex, &deadline);
         }
         const size_t length = used;
@@ -67,7 +72,8 @@ void* writer(void*) {
 
         if (length) {
             const auto start = now_ns();
-            if (!write_all(buffers[ready], length)) ++errors;
+            if (!write_all(buffers[ready], length))
+                ++errors;
             writeNs += now_ns() - start;
             bytes += length;
             dirty = true;
@@ -75,18 +81,21 @@ void* writer(void*) {
         auto now = now_ns();
         if (lost || now - lastReport >= 2000000000 || stop) {
             char line[256];
-            const int n = std::snprintf(line, sizeof(line),
+            const int n = std::snprintf(
+                line, sizeof(line),
                 "[%9.3f] LOGIO bytes %llu dropped_records %llu errors %llu write_ms %.3f flush_ms %.3f\n",
-                melee_nx_log_now_ms(), (unsigned long long)bytes, (unsigned long long)lost, (unsigned long long)errors,
-                writeNs / 1e6, syncNs / 1e6);
-            if (n > 0) write_all(line, size_t(n));
+                melee_nx_log_now_ms(), (unsigned long long)bytes, (unsigned long long)lost,
+                (unsigned long long)errors, writeNs / 1e6, syncNs / 1e6);
+            if (n > 0)
+                write_all(line, size_t(n));
             bytes = writeNs = syncNs = errors = 0;
             dirty = true;
             lastReport = now;
         }
         if (request != completed || stop || (dirty && now - lastSync >= 1000000000)) {
             const auto start = now_ns();
-            if (fsync(STDOUT_FILENO) != 0) ++errors;
+            if (fsync(STDOUT_FILENO) != 0)
+                ++errors;
             syncNs += now_ns() - start;
             lastSync = now_ns();
             dirty = false;
@@ -95,7 +104,8 @@ void* writer(void*) {
         completed = request;
         pthread_cond_broadcast(&flushed);
         pthread_mutex_unlock(&mutex);
-        if (stop) break;
+        if (stop)
+            break;
     }
     return nullptr;
 }
@@ -110,12 +120,15 @@ extern "C" void melee_nx_log_init(void) {
     if (!running) {
         stopping = false;
         running = pthread_create(&worker, nullptr, writer, nullptr) == 0;
-        if (!running) write_all("[LOGIO] writer unavailable; synchronous fallback\n", sizeof("[LOGIO] writer unavailable; synchronous fallback\n") - 1);
+        if (!running)
+            write_all("[LOGIO] writer unavailable; synchronous fallback\n",
+                      sizeof("[LOGIO] writer unavailable; synchronous fallback\n") - 1);
     }
     pthread_mutex_unlock(&mutex);
 }
 extern "C" void melee_nx_log_write(const char* data, size_t size) {
-    if (!data || !size) return;
+    if (!data || !size)
+        return;
     pthread_mutex_lock(&mutex);
     if (!running) {
         write_all(data, size);
@@ -126,7 +139,8 @@ extern "C" void melee_nx_log_write(const char* data, size_t size) {
     } else {
         std::memcpy(buffers[pending] + used, data, size);
         used += size;
-        if (used >= 16384) pthread_cond_signal(&wake);
+        if (used >= 16384)
+            pthread_cond_signal(&wake);
     }
     pthread_mutex_unlock(&mutex);
 }
@@ -135,14 +149,16 @@ extern "C" void melee_nx_log_flush(void) {
     if (running && !stopping) {
         const uint64_t target = ++requested;
         pthread_cond_signal(&wake);
-        while (completed < target) pthread_cond_wait(&flushed, &mutex);
+        while (completed < target)
+            pthread_cond_wait(&flushed, &mutex);
     } else if (!running) {
         fsync(STDOUT_FILENO);
     }
     pthread_mutex_unlock(&mutex);
 }
 extern "C" void melee_nx_log_write_critical(const char* data, size_t size) {
-    if (!data || !size) return;
+    if (!data || !size)
+        return;
     // Critical records may block for space. Routine telemetry never does.
     // Split only if a caller supplies more than the entire buffer capacity.
     while (size) {
@@ -151,9 +167,11 @@ extern "C" void melee_nx_log_write_critical(const char* data, size_t size) {
         while (running && !stopping && chunk > Capacity - used) {
             const auto target = ++requested;
             pthread_cond_signal(&wake);
-            while (completed < target) pthread_cond_wait(&flushed, &mutex);
+            while (completed < target)
+                pthread_cond_wait(&flushed, &mutex);
         }
-        if (!running) write_all(data, chunk);
+        if (!running)
+            write_all(data, chunk);
         else if (!stopping) {
             std::memcpy(buffers[pending] + used, data, chunk);
             used += chunk;
@@ -171,7 +189,8 @@ extern "C" void melee_nx_log_shutdown(void) {
     stopping = true;
     pthread_cond_signal(&wake);
     pthread_mutex_unlock(&mutex);
-    if (join) pthread_join(worker, nullptr);
+    if (join)
+        pthread_join(worker, nullptr);
     pthread_mutex_lock(&mutex);
     running = false;
     pthread_mutex_unlock(&mutex);
