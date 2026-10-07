@@ -1,7 +1,15 @@
 diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
 --- a/lib/gx/command_processor.cpp
 +++ b/lib/gx/command_processor.cpp
-@@ -12,6 +12,9 @@
+@@ -4,6 +4,7 @@
+ #include "command_processor.hpp"
+ 
+ #include "../gfx/depth_peek.hpp"
++#include "../gfx/pipeline_cache.hpp"
+ #include "../gfx/recording.hpp"
+ #include "../internal.hpp"
+ #include "dolphin/gd/GDGeometry.h"
+@@ -12,6 +13,9 @@
  #include "pipeline.hpp"
  #include "regs.hpp"
  #include "shader_info.hpp"
@@ -11,8 +19,16 @@ diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
  #include "texture.hpp"
  
  #include <tracy/Tracy.hpp>
-@@ -145,6 +148,18 @@
+@@ -143,8 +147,29 @@ struct DrawCache {
+   FogRangeLutKey fogRangeKey{};
+   bool hasFogRange = false;
    GXVtxFmt lastDrawFmt = GX_MAX_VTXFMT;
++  // Uber-shader fallback (Switch): while the specialised pipeline compiles, draws
++  // are recorded against uberRef with a uniform block packed for that shader.
++  bool uberSupported = false;
++  bool useUber = false;
++  bool readinessChecked = false;
++  gfx::PipelineRef uberRef{};
  };
  DrawCache sDrawCache;
 +#if defined(__SWITCH__)
@@ -20,6 +36,9 @@ diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
 +// configuration on every hit and bound storage without a full-cache clear.
 +static melee_nx::ShaderInfoCache<ShaderConfig, ShaderInfo, 256> sShaderInfoCache;
 +static uint64_t sSamePipeline = 0, sShaderInfoHits = 0, sShaderInfoMisses = 0;
++// Draws by pipeline kind: uber-shader fallback, specialised, and specialised only because
++// the uber-shader cannot express them.
++static uint64_t sUberDraws = 0, sSpecialisedDraws = 0, sUberRefusedDraws = 0;
 +static ShaderInfo cached_shader_info(const ShaderConfig& config) noexcept {
 +  bool hit;
 +  const auto info = sShaderInfoCache.get(config, xxh3_hash(config), build_shader_info, hit);
@@ -30,7 +49,7 @@ diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
  
  FogRangeLutKey fog_range_lut_key() noexcept {
    const auto& state = g_gxState.fog;
-@@ -404,11 +419,28 @@
+@@ -404,12 +429,42 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
    const bool pipelineValid = cache.hasPipeline && (state.dirty & DirtyPipeline) == 0 && cache.fmt == fmt &&
                               cache.lineMode == lineMode && cache.config.msaaSamples == gfx::get_sample_count();
    if (!pipelineValid) {
@@ -56,10 +75,24 @@ diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
      populate_pipeline_config(cache.config, prim, fmt);
      cache.shaderInfo = build_shader_info(cache.config.shaderConfig);
 +#endif
++#if defined(__SWITCH__)
++    cache.uberSupported = uber_mode() > 0 && uber_supports(cache.config.shaderConfig, cache.shaderInfo);
++    cache.useUber = false;
++    cache.readinessChecked = false;
++    cache.uberRef = {};
++    if (cache.uberSupported) {
++      const auto config = cache.config;
++      cache.pipelineRef = gfx::find_pipeline_async(config, [config] { return create_pipeline(config); });
++    } else {
++      cache.pipelineRef = gfx::pipeline_ref(cache.config);
++    }
++#else
      cache.pipelineRef = gfx::pipeline_ref(cache.config);
++#endif
      cache.fmt = fmt;
      cache.lineMode = lineMode;
-@@ -418,6 +450,9 @@
+     cache.hasPipeline = true;
+@@ -418,6 +473,9 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
          prevSampledIndTextures != cache.shaderInfo.sampledIndTextures) {
        cache.bindGeneration = 0;
      }
@@ -69,7 +102,71 @@ diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
    }
  
    const bool bindGroupsValid =
-@@ -585,6 +620,21 @@
+@@ -449,9 +507,44 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
+     }
+   }
+ 
++#if defined(__SWITCH__)
++  if (cache.uberSupported && uber_tripped()) {
++    // Frames collapsed under uber draws: stop using it and wait for real pipelines.
++    if (cache.useUber) {
++      cache.useUber = false;
++      state.dirty |= DirtyUniform;
++    }
++    cache.uberSupported = false;
++    if (!gfx::pipeline_ready(cache.pipelineRef)) {
++      cache.pipelineRef = gfx::pipeline_ref(cache.config);
++    }
++  }
++  if (cache.uberSupported && (!cache.readinessChecked || cache.useUber)) {
++    // Draw with the uber-shader until the specialised pipeline can be used. The
++    // two uniform layouts differ, so a switch in either direction repacks. Ready
++    // pipelines stay ready, so only a pipeline in use as an uber draw is re-polled.
++    cache.readinessChecked = true;
++    const bool wantUber = uber_mode() >= 2 || !gfx::pipeline_ready(cache.pipelineRef);
++    if (wantUber != cache.useUber) {
++      cache.useUber = wantUber;
++      state.dirty |= DirtyUniform;
++    }
++    if (wantUber && cache.uberRef == gfx::PipelineRef{}) {
++      cache.uberRef = gfx::pipeline_ref(uber_pipeline_config(cache.config));
++    }
++  }
++#endif
+   const bool uniformValid = (state.dirty & DirtyUniform) == 0 && cache.uniformRange.size != 0;
+   if (!uniformValid) {
++#if defined(__SWITCH__)
++    if (cache.useUber) {
++      cache.uniformRange = build_uber_uniform(cache.config.shaderConfig, cache.shaderInfo);
++    } else {
++      cache.uniformRange = build_uniform(cache.shaderInfo);
++    }
++#else
+     cache.uniformRange = build_uniform(cache.shaderInfo);
++#endif
+     state.dirty &= ~DirtyUniform;
+   }
+   if (cache.config.shaderConfig.fogRangeEnabled) {
+@@ -542,8 +635,17 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
+   }
+ 
+   cache.lastDrawFmt = fmt;
++#if defined(__SWITCH__)
++  if (cache.useUber) {
++    ++sUberDraws;
++    uber_frame_draws().fetch_add(1, std::memory_order_relaxed);
++  } else {
++    ++sSpecialisedDraws;
++    sUberRefusedDraws += (uber_mode() > 0 && !cache.uberSupported) ? 1 : 0;
++  }
++#endif
+   gfx::push_draw_command(DrawData{
+-      .pipeline = cache.pipelineRef,
++      .pipeline = cache.useUber ? cache.uberRef : cache.pipelineRef,
+       .vertRange = vertRange,
+       .idxRange = idxRange,
+       .uniformRange = cache.uniformRange,
+@@ -585,6 +687,21 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, ByteReader&
    if (totalVtxBytes > reader.remaining())
      UNLIKELY { handle_draw_overrun(totalVtxBytes, reader); }
  
@@ -91,7 +188,7 @@ diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
    const bool cleanState = g_gxState.dirty == 0 && fmt == sDrawCache.lastDrawFmt && sDrawCache.lineMode == 0 &&
                            prim != GX_LINES && prim != GX_LINESTRIP && prim != GX_POINTS;
    auto* lastDraw = cleanState ? gfx::get_last_draw_command<DrawData>() : nullptr;
-@@ -737,15 +787,23 @@
+@@ -737,15 +854,23 @@ void handle_aurora(ByteReader& reader) noexcept {
      const u32 newHeight = reader.read<u32>();
      const auto newFormat = static_cast<GXTexFmt>(reader.read<u32>());
      const auto newTlut = static_cast<GXTlut>(reader.read<u32>());
@@ -120,7 +217,7 @@ diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
          slot.mFormat != static_cast<u32>(newFormat) || slot.tlut != newTlut || slot.flags != newFlags ||
          slot.texObjId != newTexObjId || slot.texDataVersion != newTexDataVersion) {
        slot.data = newData;
-@@ -886,6 +944,16 @@
+@@ -886,6 +1011,19 @@ void handle_aurora(ByteReader& reader) noexcept {
  }
  
  void clear_draw_cache() noexcept {
@@ -130,6 +227,9 @@ diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
 +  if (++frames == 120) {
 +    Log.info("GXCPU same_pipeline {} shader_info_hits {} shader_info_misses {} over {} frames",
 +             sSamePipeline, sShaderInfoHits, sShaderInfoMisses, frames);
++    Log.info("UBER mode {} draws uber {} specialised {} (uber unsupported {}) over {} frames", uber_mode(), sUberDraws,
++             sSpecialisedDraws, sUberRefusedDraws, frames);
++    sUberDraws = sSpecialisedDraws = sUberRefusedDraws = 0;
 +    sSamePipeline = sShaderInfoHits = sShaderInfoMisses = 0;
 +    frames = 0;
 +  }

@@ -290,7 +290,6 @@ index a863d89..6ef2503 100644
              jobj = fp->parts[i].joint;
              dobj = HSD_JObjGetDObj(jobj);
 diff --git a/src/melee/ft/ftparts.c b/src/melee/ft/ftparts.c
-index cf3399c..32608b9 100644
 --- a/src/melee/ft/ftparts.c
 +++ b/src/melee/ft/ftparts.c
 @@ -18,7 +18,7 @@
@@ -317,7 +316,69 @@ index cf3399c..32608b9 100644
      vis->xC[4] = 0;
      vis->cleared[0] = true;
      vis->cleared[1] = true;
-@@ -756,7 +756,7 @@ u32 ftParts_8007506C(enum FighterKind ftkind, int part)
+@@ -596,6 +596,25 @@ void ftParts_80074B0C(Fighter_GObj* gobj, int model_idx, int val)
+     }
+ }
+ 
++/* Visibility groups in Pl*.dat hold DObj indices behind a disc slot. A group
++ * read from the wrong place yields a slot that is not a MEM1 address; the
++ * GameCube writes through it unnoticed, the Switch faults. Skip and report. */
++static u8* ftParts_VisGroupIndices(const TempS* group)
++{
++    static int reports;
++    u8* indices = DP(u8, group->x4);
++
++    if (!pc_dp_in_window(indices)) {
++        if (reports < 8) {
++            reports++;
++            OSReport("ftParts: vis group slot %08x outside MEM1, skipped\n",
++                     (u32) group->x4);
++        }
++        return NULL;
++    }
++    return indices;
++}
++
+ void ftParts_80074B6C(Fighter* fp, FtPartsVis* vis, int idx,
+                       DObjList* dobj_list)
+ {
+@@ -607,7 +626,10 @@ void ftParts_80074B6C(Fighter* fp, FtPartsVis* vis, int idx,
+             int j;                               // r24
+             for (j = 0; j < lookup[i].x0; j++) {
+                 TempS* r27 = &DP(TempS, lookup[i].x4)[j]; // r27
+-                u8* r0 = DP(u8, r27->x4);              // r0
++                u8* r0 = ftParts_VisGroupIndices(r27); // r0
++                if (r0 == NULL) {
++                    continue;
++                }
+                 if (j == r25) {
+                     int k; // r20
+                     for (k = 0; k < r27->x0; k++) {
+@@ -637,7 +659,10 @@ void ftParts_80074CA0(FtPartsVis* vis, int idx, DObjList* dobj_list)
+                 int k;      // r22
+                 u8* r29;    // r29
+                 r26 = &DP(TempS, lookup[i].x4)[j];
+-                r29 = DP(u8, r26->x4);
++                r29 = ftParts_VisGroupIndices(r26);
++                if (r29 == NULL) {
++                    continue;
++                }
+                 for (k = 0; k < r26->x0; k++) {
+                     HSD_DObjClearFlags(dobj_list->data[r29[k]], 1);
+                 }
+@@ -659,7 +684,10 @@ void ftParts_80074D7C(FtPartsVis* vis, int idx, DObjList* dobj_list)
+                 int k;      // r22
+                 u8* r29;    // r29
+                 r26 = &DP(TempS, lookup[i].x4)[j];
+-                r29 = DP(u8, r26->x4);
++                r29 = ftParts_VisGroupIndices(r26);
++                if (r29 == NULL) {
++                    continue;
++                }
+                 for (k = 0; k < r26->x0; k++) {
+                     HSD_DObjSetFlags(dobj_list->data[r29[k]], 1);
+                 }
+@@ -756,7 +784,7 @@ u32 ftParts_8007506C(enum FighterKind ftkind, int part)
      int i;
      struct Fighter_804D6540_t* temp_r3;
  
@@ -744,3 +805,62 @@ index 5e9ebf9..4685ba1 100644
  
  enum PS_AppStatus {
      PS_APPSTATUS_ONCE = 1,
+diff --git a/src/melee/it/item.c b/src/melee/it/item.c
+--- a/src/melee/it/item.c
++++ b/src/melee/it/item.c
+@@ -48,7 +48,7 @@
+ /* 2675A8 */ static void Item_802675A8(HSD_GObj* gobj);
+ /* 2676F4 */ static void Item_802676F4(HSD_GObj* gobj);
+ /* 26784C */ static bool Item_8026784C(enum_t dropItem, int);
+-/* 267AA8 */ static void Item_80267AA8(HSD_GObj* gobj, SpawnItem* spawnItem);
++/* 267AA8 */ static bool Item_80267AA8(HSD_GObj* gobj, SpawnItem* spawnItem);
+ /* 26814C */ static void Item_8026814C(HSD_GObj* gobj);
+ /* 2682F0 */ static bool Item_802682F0(HSD_GObj* gobj);
+ /* 268560 */ static void Item_80268560(HSD_GObj* gobj);
+@@ -564,7 +564,7 @@ void Item_80267978(HSD_GObj* gobj)
+ }
+ 
+ /// Initialize item variables
+-static void Item_80267AA8(HSD_GObj* gobj, SpawnItem* spawnItem)
++static bool Item_80267AA8(HSD_GObj* gobj, SpawnItem* spawnItem)
+ {
+     ItemAttr* item_attr;
+ 
+@@ -575,6 +575,14 @@ static void Item_80267AA8(HSD_GObj* gobj, SpawnItem* spawnItem)
+     item_data->x1C = it_804D6D10++;
+     item_data->entity = gobj;
+     Item_80267978(gobj);
++    if (item_data->xC4_article_data == NULL) {
++        /* The owner's OnLoad never registered this article (or the table was
++         * reloaded since). Dereferencing it below faults; refuse the spawn. */
++        OSReport("item: no article for kind %d hold %d (table %p), spawn "
++                 "skipped\n",
++                 item_data->kind, item_data->hold_kind, (void*) it_804D6D38);
++        return false;
++    }
+     item_data->msid = -1;
+     item_data->xC8_joint = DP(
+         HSD_Joint,
+@@ -734,6 +742,7 @@ static void Item_80267AA8(HSD_GObj* gobj, SpawnItem* spawnItem)
+     } else {
+         item_data->x20_team_id = -1;
+     }
++    return true;
+ }
+ 
+ /// Setup Item JObj
+@@ -963,7 +972,13 @@ static HSD_GObj* Item_8026862C(SpawnItem* spawnItem)
+         return NULL;
+     }
+     GObj_InitUserData(gobj, 6, Item_OnUserDataRemove, user_data);
+-    Item_80267AA8(gobj, spawnItem);
++    if (!Item_80267AA8(gobj, spawnItem)) {
++        /* The block is recycled uncleared; keep the destructor off stale
++         * dynamic-bone state. */
++        ((Item*) user_data)->xBBC_dynamicBoneTable = NULL;
++        HSD_GObjFree(gobj);
++        return NULL;
++    }
+     Item_802680CC(gobj);
+     if (Item_802682F0(gobj) != false) {
+         Item_8026814C(gobj);

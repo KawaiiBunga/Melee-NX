@@ -1,5 +1,4 @@
 diff --git a/src/pc/main.c b/src/pc/main.c
-index 0954e60..e3e1a79 100644
 --- a/src/pc/main.c
 +++ b/src/pc/main.c
 @@ -22,6 +22,9 @@
@@ -135,6 +134,14 @@ index 0954e60..e3e1a79 100644
          .msaa = 1,
          .maxTextureAnisotropy = 16,
          /* MELEE_VSYNC=0 picks Mailbox/Immediate instead of FifoRelaxed; some
+@@ -341,6 +410,7 @@ MELEE_EXPORT int main(int argc, char* argv[]) {
+     if (launched != 1)
+         return launched == 0 ? 0 : 1;
+ 
++    aurora_warm_pipelines();
+     pc_menu_init(info.window);
+     pc_platform_init();
+     aurora_card_set_present(card);
 diff --git a/src/pc/os.c b/src/pc/os.c
 index 55cc86c..d1237b0 100644
 --- a/src/pc/os.c

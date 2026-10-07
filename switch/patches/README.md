@@ -47,6 +47,7 @@ Dusklight patches target `ref/SDL-dusklight`; the legacy patch targets `ref/SDL`
 | [aurora-switch-gx-cpu.patch](aurora-switch-gx-cpu.patch) | Dusklight-derived redundant effective-state suppression and bounded exact-key shader analysis; preserves movie texture dirtiness; `GXCPU` counters |
 | [aurora-switch-runtime-fixes.patch](aurora-switch-runtime-fixes.patch) | Card-probe TTL, stable texture IDs, and no-cache texture metadata |
 | [aurora-switch-thread-sweep.patch](aurora-switch-thread-sweep.patch) | Connects named thread setup to the optional Switch affinity sweep |
+| [aurora-switch-uber-shader.patch](aurora-switch-uber-shader.patch) | Uber-shader support: shared WGSL helpers, uber pipeline identity, uniform packing and support check, launch-warm stand-ins (draw hooks live in the GX CPU, cache-recovery and encoder patches) |
 
 ## Melee
 

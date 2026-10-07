@@ -81,7 +81,19 @@ diff --git a/lib/gfx/encoding.hpp b/lib/gfx/encoding.hpp
 diff --git a/lib/gx/pipeline.cpp b/lib/gx/pipeline.cpp
 --- a/lib/gx/pipeline.cpp
 +++ b/lib/gx/pipeline.cpp
-@@ -56,6 +56,7 @@
+@@ -16,6 +16,11 @@ namespace aurora::gx {
+ 
+ wgpu::RenderPipeline create_pipeline(const PipelineConfig& config) {
+   ZoneScoped;
++  if (is_uber_config(config)) {
++    // One shader module serves every uber pipeline; they differ only in fixed state.
++    static const wgpu::ShaderModule uberShader = build_uber_shader();
++    return build_pipeline(config, {}, uberShader, "GX Uber Pipeline");
++  }
+   const auto shader = build_shader(config.shaderConfig);
+   const auto label =
+       fmt::format("GX Pipeline {:x} shader {:x}", xxh3_hash(config, static_cast<HashType>(gfx::ShaderType::GX)),
+@@ -56,6 +61,7 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
      return;
    }
  
@@ -89,7 +101,7 @@ diff --git a/lib/gx/pipeline.cpp b/lib/gx/pipeline.cpp
    // AURORA_ONLY_UNTEX_VTX=<n>: render ONLY untextured draws with n vertices
    // and drop everything else, so the offending geometry can be seen in
    // isolation on a black frame. Suppressing a draw proves it is responsible;
-@@ -102,18 +103,20 @@
+@@ -102,18 +108,20 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
        return;
      }
    }
@@ -102,11 +114,11 @@ diff --git a/lib/gx/pipeline.cpp b/lib/gx/pipeline.cpp
    if (data.bindGroups.textureBindGroup) {
 -    pass.SetBindGroup(2, gfx::find_bind_group(data.bindGroups.textureBindGroup));
 +    gfx::bind_texture_group(pass, data.bindGroups.textureBindGroup);
-   }
--  pass.SetIndexBuffer(resources.indexBuffer, wgpu::IndexFormat::Uint16, data.idxRange.offset, data.idxRange.size);
++  }
 +  if (data.indexCount != 0) {
 +    pass.SetIndexBuffer(resources.indexBuffer, wgpu::IndexFormat::Uint16, data.idxRange.offset, data.idxRange.size);
-+  }
+   }
+-  pass.SetIndexBuffer(resources.indexBuffer, wgpu::IndexFormat::Uint16, data.idxRange.offset, data.idxRange.size);
    if (data.dstAlpha != UINT32_MAX) {
 -    const wgpu::Color color{0.f, 0.f, 0.f, data.dstAlpha / 255.f};
 -    pass.SetBlendConstant(&color);

@@ -104,7 +104,7 @@ target_compile_definitions(melee PRIVATE
   MELEE_NX_ROOT_REV="${MELEE_NX_ROOT_REV}"
   MELEE_NX_MELEE_PC_REV="${MELEE_NX_MELEE_PC_REV}"
   MELEE_NX_PATCHSET_ID="${MELEE_NX_PATCHSET_ID}"
-  MELEE_APP_VERSION="v0.2.0")
+  MELEE_APP_VERSION="v0.2.5")
 target_include_directories(melee PRIVATE "${CMAKE_CURRENT_LIST_DIR}/src/game_data")
 target_link_libraries(melee PRIVATE melee_game aurora::main ${MELEE_CRYPTO_LIBS} ${MELEE_NETWORK_LIBS})
 # Bridge the Rust archive ABI to newlib.
@@ -150,8 +150,8 @@ add_dependencies(melee launcher_resources)
 # Package as NRO
 nx_generate_nacp(melee.nacp
   NAME "Melee NX"
-  AUTHOR "melee-nx"
-  VERSION "0.2.0")
+  AUTHOR "Kawaii"
+  VERSION "0.2.5")
 nx_create_nro(melee
   NACP melee.nacp
   ICON "${CMAKE_CURRENT_LIST_DIR}/icon.jpg"

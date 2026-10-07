@@ -53,5 +53,11 @@ int main() {
     assert(!seeded.remember(400, true));
     seeded = {};
     assert(seeded.remember(600, true));
+    melee_nx::PipelineRequestState demand;
+    assert(!demand.remember(500, false) && !demand.deviceUsed);
+    assert(demand.promote() && !demand.promote());
+    melee_nx::PipelineRequestState stored;
+    stored.deviceUsed = true;
+    assert(!stored.promote());
     std::cout << "GX cache collision/capacity/invalidation and in-flight persistence checks passed\n";
 }

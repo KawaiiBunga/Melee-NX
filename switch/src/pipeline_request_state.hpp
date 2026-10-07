@@ -11,6 +11,9 @@ struct PipelineRequestState {
     uint32_t firstFrameUsed = std::numeric_limits<uint32_t>::max();
     bool known = false;
     bool compiling = false;
+    // The stored descriptor is already marked as used on this device, so it
+    // loads ahead of untouched seed entries.
+    bool deviceUsed = false;
 
     bool remember(uint32_t frame, bool persist) noexcept {
         const bool changed = !known || frame < firstFrameUsed;
@@ -18,6 +21,14 @@ struct PipelineRequestState {
             firstFrameUsed = frame;
         known = true;
         return persist && changed;
+    }
+
+    // True once per descriptor, the first time a draw needs it: the row must be
+    // rewritten even though its first-use frame did not change.
+    bool promote() noexcept {
+        const bool first = !deviceUsed;
+        deviceUsed = true;
+        return first;
     }
 };
 

@@ -13,6 +13,10 @@ Affinity affinity = Affinity::Baseline;
 const char* affinity_name = "baseline";
 int compile_workers = 1;
 int monolithic_cache = 0;
+int launch_warm = 1; // 0 skips the startup shader warm-up
+int gx_skip_unready = 0;
+int warm_helpers = 0;
+int uber = 0; // 0 off, 1 hybrid, 2 always (where supported); measured too slow on the GPU, see docs
 constexpr uint64_t BinNs = 250000; // Report percentile upper bounds, 0.25 ms bins.
 constexpr size_t BinCount = 4000;  // >=1000 ms is reported as overflow.
 std::array<uint32_t, BinCount> bins{};
@@ -58,6 +62,16 @@ extern "C" void melee_nx_perf_init(void) {
                 compile_workers = (std::strcmp(value, "2") == 0) ? 2 : 1;
             } else if (std::strcmp(key, "monolithic_cache") == 0) {
                 monolithic_cache = (std::strcmp(value, "1") == 0) ? 1 : 0;
+            } else if (std::strcmp(key, "uber") == 0) {
+                const int mode = std::atoi(value);
+                uber = mode < 0 ? 0 : (mode > 2 ? 2 : mode);
+            } else if (std::strcmp(key, "warm_helpers") == 0) {
+                const int count = std::atoi(value);
+                warm_helpers = count < 0 ? 0 : (count > 2 ? 2 : count);
+            } else if (std::strcmp(key, "gx_skip_unready") == 0) {
+                gx_skip_unready = (std::strcmp(value, "1") == 0) ? 1 : 0;
+            } else if (std::strcmp(key, "launch_warm") == 0) {
+                launch_warm = std::atoi(value) != 0 ? 1 : 0;
             }
         }
         std::fclose(file);
@@ -65,10 +79,31 @@ extern "C" void melee_nx_perf_init(void) {
     // Bridge perf.cfg knobs to aurora, which reads these env vars when it creates
     // the device / pipeline cache later in melee's main().
     setenv("AURORA_COMPILE_WORKERS", compile_workers == 2 ? "2" : "1", 1);
-    setenv("AURORA_MONOLITHIC_PIPELINE_CACHE", monolithic_cache == 1 ? "1" : "0", 1);
+    // The uber pipelines all share one shader; without a shared Vulkan pipeline cache
+    // each would recompile it.
+    setenv("AURORA_MONOLITHIC_PIPELINE_CACHE", (monolithic_cache == 1 || uber > 0) ? "1" : "0", 1);
+    char warm[16];
+    std::snprintf(warm, sizeof(warm), "%d", launch_warm);
+    setenv("AURORA_LAUNCH_WARM_SECONDS", warm, 1);
+    setenv("AURORA_GX_SKIP_UNREADY", gx_skip_unready == 1 ? "1" : "0", 1);
+    char helpers[8];
+    std::snprintf(helpers, sizeof(helpers), "%d", warm_helpers);
+    setenv("AURORA_LAUNCH_WARM_HELPERS", helpers, 1);
+    if (uber > 0) {
+        // A previous run turned the uber-shader off after frames collapsed under it.
+        if (FILE* marker = std::fopen("sdmc:/switch/melee-nx/uber.tripped", "rb")) {
+            std::fclose(marker);
+            uber = 0;
+            pc_log_line("SWEEP uber disabled by sdmc:/switch/melee-nx/uber.tripped");
+        }
+    }
+    char uberMode[8];
+    std::snprintf(uberMode, sizeof(uberMode), "%d", uber);
+    setenv("AURORA_UBER", uberMode, 1);
     pc_log_line(
-        "SWEEP affinity %s compile_workers %d monolithic_cache %d histogram_bin_ms 0.25 histogram_limit_ms 1000",
-        affinity_name, compile_workers, monolithic_cache);
+        "SWEEP affinity %s compile_workers %d monolithic_cache %d launch_warm %d gx_skip_unready %d "
+        "histogram_bin_ms 0.25 histogram_limit_ms 1000",
+        affinity_name, compile_workers, monolithic_cache, launch_warm, gx_skip_unready);
 }
 
 extern "C" void melee_nx_perf_thread(const char* name) {
