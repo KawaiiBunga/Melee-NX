@@ -11,6 +11,8 @@ struct Settings {
     bool quickLaunch = false;  // start the game straight away; hold L while starting to see the launcher
     bool returnToLauncher = true;  // the game reopens the launcher when it exits
     std::string discPath;          // the disc image chosen in Game Files; empty: pick automatically
+    int mode = 0;                  // 0 Vanilla, 1 Slippi (passed to the game as launch.cfg mode=)
+    std::string opponentCode;      // Slippi: the last opponent's connect code
 };
 
 Settings LoadSettings();

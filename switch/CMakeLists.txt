@@ -44,31 +44,69 @@ file(GLOB_RECURSE GAME_SOURCES CONFIGURE_DEPENDS
 list(APPEND GAME_SOURCES "${MELEE_PC_ROOT}/src/pc/vtxarray.c")
 list(FILTER GAME_SOURCES EXCLUDE REGEX "baselib/debugconsole_main\\.c$")
 
-add_library(melee_game STATIC ${GAME_SOURCES})
-target_include_directories(melee_game PUBLIC
-  "${MELEE_PC_ROOT}/extern/aurora/include"
-  "${MELEE_PC_ROOT}/src"
-  "${MELEE_PC_ROOT}/src/sdk_include"
-  "${CMAKE_CURRENT_LIST_DIR}/src")
-target_compile_definitions(melee_game PUBLIC TARGET_PC=1 MELEE_PC=1 __SWITCH__=1)
-target_compile_options(melee_game PRIVATE
-  -fpermissive
-  -Wno-all -Wno-extra
-  -Werror=int-conversion
-  -Werror=implicit-function-declaration
-  -Werror=incompatible-pointer-types
-  -fno-strict-aliasing
-  -fwrapv
-  -ffp-contract=off
-  -fexec-charset=CP932
-  -Wno-scalar-storage-order
-  -fPIC
-  # Game headers rely on DISC_STRUCT and DP from this upstream compatibility header.
-  -include ${MELEE_PC_ROOT}/src/pc/compat.h)
-target_link_libraries(melee_game PUBLIC
-  aurora::core aurora::gx aurora::gd aurora::vi aurora::pad aurora::si aurora::mtx
-  aurora::os aurora::dvd aurora::card aurora::thp)
+# Game objects whose globals are not simulation state: written by the audio thread (the 5 ms synth
+# callback runs there), the renderer or the memory card worker, or debug-only. They build as
+# melee_game_host and stay out of the rollback snapshot (docs/SLIPPI.md, "Rollback self-test").
+set(GAME_HOST_STATE_SOURCES
+  "${MELEE_PC_ROOT}/src/sysdolphin/baselib/axdriver.c"
+  "${MELEE_PC_ROOT}/src/sysdolphin/baselib/synth.c"
+  "${MELEE_PC_ROOT}/src/sysdolphin/baselib/video.c"
+  "${MELEE_PC_ROOT}/src/sysdolphin/baselib/tev.c"
+  "${MELEE_PC_ROOT}/src/sysdolphin/baselib/sislib_font.c"
+  "${MELEE_PC_ROOT}/src/sysdolphin/baselib/card.c"
+  "${MELEE_PC_ROOT}/src/melee/lb/lbaudio_ax.c"
+  "${MELEE_PC_ROOT}/src/melee/ef/eflib.c")
+file(GLOB GAME_DEBUG_SOURCES CONFIGURE_DEPENDS "${MELEE_PC_ROOT}/src/melee/db/*.c")
+list(APPEND GAME_HOST_STATE_SOURCES ${GAME_DEBUG_SOURCES})
+list(REMOVE_ITEM GAME_SOURCES ${GAME_HOST_STATE_SOURCES})
+# Slippi online, the game side (docs/SLIPPI.md): the gameplay codes are simulation state, the
+# netplay bookkeeping must survive a rollback load.
+list(APPEND GAME_SOURCES "${CMAKE_CURRENT_LIST_DIR}/slippi/game/slippi_codes.c")
+list(APPEND GAME_HOST_STATE_SOURCES "${CMAKE_CURRENT_LIST_DIR}/slippi/game/slippi_online.c")
 
+add_library(melee_game STATIC ${GAME_SOURCES})
+add_library(melee_game_host STATIC ${GAME_HOST_STATE_SOURCES})
+foreach(_game_target melee_game melee_game_host)
+  target_include_directories(${_game_target} PUBLIC
+    "${MELEE_PC_ROOT}/extern/aurora/include"
+    "${MELEE_PC_ROOT}/src"
+    "${MELEE_PC_ROOT}/src/sdk_include"
+    "${CMAKE_CURRENT_LIST_DIR}/src"
+    "${CMAKE_CURRENT_LIST_DIR}/slippi"
+    "${CMAKE_CURRENT_LIST_DIR}/slippi/game")
+  target_compile_definitions(${_game_target} PUBLIC TARGET_PC=1 MELEE_PC=1 __SWITCH__=1)
+  target_compile_options(${_game_target} PRIVATE
+    -fpermissive
+    -Wno-all -Wno-extra
+    -Werror=int-conversion
+    -Werror=implicit-function-declaration
+    -Werror=incompatible-pointer-types
+    -fno-strict-aliasing
+    -fwrapv
+    -ffp-contract=off
+    -fexec-charset=CP932
+    -Wno-scalar-storage-order
+    -fPIC
+    # Game headers rely on DISC_STRUCT and DP from this upstream compatibility header.
+    -include ${MELEE_PC_ROOT}/src/pc/compat.h)
+  target_link_libraries(${_game_target} PUBLIC
+    aurora::core aurora::gx aurora::gd aurora::vi aurora::pad aurora::si aurora::mtx
+    aurora::os aurora::dvd aurora::card aurora::thp)
+endforeach()
+# The two libraries call each other; CMake repeats static libraries in a cycle on the link line.
+target_link_libraries(melee_game PUBLIC melee_game_host)
+target_link_libraries(melee_game_host PRIVATE melee_game)
+# Rollback snapshots (src/rollback_switch.cpp) need the game's simulation globals in one place: one
+# data and one bss section per object, renamed to mgdata/mgbss after archiving, which the linker
+# brackets with __start_/__stop_ symbols. Relocation-read-only data (.data.rel.ro) stays put.
+target_compile_options(melee_game PRIVATE -fno-data-sections)
+add_custom_command(TARGET melee_game POST_BUILD
+  COMMAND "${DEVKITPRO}/devkitA64/bin/aarch64-none-elf-objcopy"
+    --rename-section .data=mgdata --rename-section .data.rel=mgdata
+    --rename-section .data.rel.local=mgdata --rename-section .bss=mgbss
+    "$<TARGET_FILE:melee_game>"
+  COMMAND "${DEVKITPRO}/devkitA64/bin/aarch64-none-elf-ranlib" "$<TARGET_FILE:melee_game>"
+  VERBATIM)
 # PC platform layer
 file(GLOB PC_SOURCES CONFIGURE_DEPENDS
   "${MELEE_PC_ROOT}/src/pc/*.c"
@@ -110,10 +148,25 @@ target_compile_definitions(melee PRIVATE
   MELEE_NX_PATCHSET_ID="${MELEE_NX_PATCHSET_ID}"
   MELEE_APP_VERSION="v0.5.0")
 target_include_directories(melee PRIVATE "${CMAKE_CURRENT_LIST_DIR}/src/game_data")
+# Slippi online, the host side: commands, netplay and matchmaking clients, ENet (docs/SLIPPI.md).
+file(GLOB SLIPPI_ENET_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/slippi/third_party/enet/*.c")
+list(FILTER SLIPPI_ENET_SOURCES EXCLUDE REGEX "win32\\.c$")
+target_sources(melee PRIVATE
+  "${CMAKE_CURRENT_LIST_DIR}/slippi/slippi_host.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/slippi/slippi_net.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/slippi/slippi_protocol.cpp"
+  ${SLIPPI_ENET_SOURCES})
+target_include_directories(melee PRIVATE
+  "${CMAKE_CURRENT_LIST_DIR}/slippi"
+  "${CMAKE_CURRENT_LIST_DIR}/slippi/third_party/enet/include"
+  "${_repo}/launcher/include")
 target_link_libraries(melee PRIVATE melee_game aurora::main ${MELEE_CRYPTO_LIBS} ${MELEE_NETWORK_LIBS})
 if(MELEE_NX_MALLOC_WRAP)
   target_link_options(melee PRIVATE "LINKER:--wrap=malloc")
 endif()
+# Rollback snapshots track every heap's range and high-water mark (src/rollback_switch.cpp).
+target_link_options(melee PRIVATE "LINKER:--wrap=OSInitAlloc" "LINKER:--wrap=OSCreateHeap"
+  "LINKER:--wrap=OSDestroyHeap" "LINKER:--wrap=OSAllocFromHeap")
 # Host services of the native renderer, and the diagnostics that keep the NVIDIA result of a failed
 # GPU submission. Every wgpu entry point in wrap-symbols.txt is replaced at link time (see
 # switch/deko/backend_internal.h); the originals stay reachable as __real_<name>.

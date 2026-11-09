@@ -143,10 +143,47 @@ diff --git a/src/pc/main.c b/src/pc/main.c
      pc_platform_init();
      aurora_card_set_present(card);
 diff --git a/src/pc/os.c b/src/pc/os.c
-index 55cc86c..d1237b0 100644
+index 55cc86c..0acc94c 100644
 --- a/src/pc/os.c
 +++ b/src/pc/os.c
-@@ -322,6 +322,19 @@ void* pc_resolve_ext_ptr(uint32_t id) {
+@@ -152,6 +152,36 @@ void OSCancelAlarms(u32 tag) {
+     OSRestoreInterrupts(intr);
+ }
+ 
++#ifdef __SWITCH__
++/* Alarms stand in for the decrementer, a hardware timer: a rollback load must not rewind them.
++ * The snapshot code holds the list and each alarm's schedule across a load and puts them back,
++ * so an alarm that already fired (the pad sample of the frame being re-simulated) does not fire
++ * a second time with the deadline the snapshot still had. */
++#define PC_ALARMS_HELD 64
++static struct {
++    OSAlarm* alarm;
++    OSAlarm copy;
++} s_held[PC_ALARMS_HELD];
++static int s_held_count;
++static OSAlarm* s_held_head;
++
++void pc_os_alarms_hold(void) {
++    s_held_count = 0;
++    s_held_head = s_alarms;
++    for (OSAlarm* a = s_alarms; a && s_held_count < PC_ALARMS_HELD; a = a->next) {
++        s_held[s_held_count].alarm = a;
++        s_held[s_held_count++].copy = *a;
++    }
++}
++
++void pc_os_alarms_release(void) {
++    for (int i = 0; i < s_held_count; i++) {
++        *s_held[i].alarm = s_held[i].copy;
++    }
++    s_alarms = s_held_head;
++}
++#endif
++
+ BOOL OSCheckAlarmQueue(void) {
+     return s_alarms != NULL;
+ }
+@@ -322,6 +352,19 @@ void* pc_resolve_ext_ptr(uint32_t id) {
      return s_ext_ptrs[id - 1];
  }
  
@@ -166,7 +203,7 @@ index 55cc86c..d1237b0 100644
  void pc_disc_ptr_overflow(const void* p, const char* file, int line) {
      fprintf(stderr, "%s:%d: pointer %p does not fit a 32-bit disc slot\n", file, line, p);
      abort();
-@@ -344,9 +357,49 @@ void pc_platform_init(void) {
+@@ -344,9 +387,49 @@ void pc_platform_init(void) {
  #include <android/log.h>
  #endif
  
@@ -216,7 +253,7 @@ index 55cc86c..d1237b0 100644
  #else
      vfprintf(stdout, msg, list);
      fflush(stdout);
-@@ -367,6 +420,12 @@ void OSPanic(const char* file, int line, const char* msg, ...) {
+@@ -367,6 +450,12 @@ void OSPanic(const char* file, int line, const char* msg, ...) {
      char buf[1024];
      vsnprintf(buf, sizeof(buf), msg, args);
      __android_log_print(ANDROID_LOG_FATAL, "OSPanic", "PANIC %s:%d: %s", file, line, buf);
@@ -253,7 +290,7 @@ index a21fa7b..29b02b9 100644
  /* Keyboard -> virtual controller (src/pc/keyboard.c). */
  typedef union SDL_Event SDL_Event;
 diff --git a/src/pc/vi.c b/src/pc/vi.c
-index 2ee5060..d4299fc 100644
+index 2ee5060..d3fbc54 100644
 --- a/src/pc/vi.c
 +++ b/src/pc/vi.c
 @@ -19,6 +19,9 @@
@@ -476,7 +513,7 @@ index 2ee5060..d4299fc 100644
      const AuroraEvent* event = aurora_update();
      while (event != NULL && event->type != AURORA_NONE) {
          if (event->type == AURORA_EXIT) {
-@@ -110,33 +261,39 @@ void pc_frame_boundary(void) {
+@@ -110,33 +261,47 @@ void pc_frame_boundary(void) {
          }
          ++event;
      }
@@ -486,7 +523,15 @@ index 2ee5060..d4299fc 100644
      pc_menu_update();
      /* Nothing draws while the overlay pauses the game, so hold the last
       * frame instead of clearing the EFB to black underneath the menu. */
++#if defined(__SWITCH__)
++    {
++        /* Slippi online: the lobby waits between two scenes with the status line up. */
++        int melee_nx_slippi_lobby_open(void);
++        aurora_preserve_frame_buffer(pc_menu_is_open() || melee_nx_slippi_lobby_open());
++    }
++#else
      aurora_preserve_frame_buffer(pc_menu_is_open());
++#endif
      pc_keyboard_apply();
 +    s_last_post_ns = SDL_GetTicksNS() - post_t0;
      if (pc_exit_requested) {
@@ -523,7 +568,7 @@ index 2ee5060..d4299fc 100644
                  if (slept > want && slept - want > sleep_worst_over_ns) {
                      sleep_worst_over_ns = slept - want;
                  }
-@@ -144,10 +301,12 @@ void pc_frame_boundary(void) {
+@@ -144,10 +309,12 @@ void pc_frame_boundary(void) {
          }
      }
      next_sim_ns += sim_period;
@@ -536,7 +581,7 @@ index 2ee5060..d4299fc 100644
      while (!aurora_begin_frame()) {
          event = aurora_update();
          while (event != NULL && event->type != AURORA_NONE) {
-@@ -158,10 +317,18 @@ void pc_frame_boundary(void) {
+@@ -158,10 +325,18 @@ void pc_frame_boundary(void) {
          }
          SDL_Delay(16);
      }
@@ -555,7 +600,7 @@ index 2ee5060..d4299fc 100644
      if (s_pre_cb) {
          s_pre_cb(s_retrace_count);
      }
-@@ -169,9 +336,16 @@ void pc_frame_boundary(void) {
+@@ -169,9 +344,16 @@ void pc_frame_boundary(void) {
      if (s_post_cb) {
          s_post_cb(s_retrace_count);
      }
@@ -572,7 +617,7 @@ index 2ee5060..d4299fc 100644
      pc_frame_boundary();
      /* The overlay pauses the game. Melee's whole simulation hangs off this
       * call returning, so keep presenting frames and pumping input here and
-@@ -179,6 +353,7 @@ void VIWaitForRetrace(void) {
+@@ -179,6 +361,7 @@ void VIWaitForRetrace(void) {
      while (pc_menu_is_open() && !pc_exit_requested) {
          pc_frame_boundary();
      }

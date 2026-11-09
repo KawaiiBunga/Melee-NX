@@ -414,7 +414,7 @@ index e4d79ec..55b6f7f 100644
          if (stat(loose_path.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
              *size = static_cast<size_t>(st.st_size);
 diff --git a/src/pc/launcher.cpp b/src/pc/launcher.cpp
-index ea637ab..f415a87 100644
+index ea637ab..ff26303 100644
 --- a/src/pc/launcher.cpp
 +++ b/src/pc/launcher.cpp
 @@ -21,6 +21,31 @@
@@ -581,9 +581,13 @@ index ea637ab..f415a87 100644
          } else if (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && open && binding < 0) {
              const auto value = e.gaxis.value;
              const auto now = SDL_GetTicks();
-@@ -1515,13 +1602,38 @@ extern "C" void pc_menu_event(const SDL_Event* event) {
+@@ -1514,19 +1601,72 @@ extern "C" void pc_menu_event(const SDL_Event* event) {
+     if (event)
          port_menu.gamepad(*event);
  }
++#if defined(__SWITCH__)
++extern "C" const char* melee_nx_slippi_status_text(void);  // switch/slippi/slippi_host.cpp
++#endif
  extern "C" void pc_menu_update(void) {
 +    PcProfilerStats stats{};
 +    pc_profiler_get_stats(&stats);
@@ -624,6 +628,36 @@ index ea637ab..f415a87 100644
                  port_menu.last_fps = SDL_GetTicks();
              }
          } else if (port_menu.counter->IsVisible())
+             port_menu.counter->Hide();
+     }
++#if defined(__SWITCH__)
++    // Slippi online: the status line (looking for the opponent, disconnected, ...).
++    {
++        static Rml::ElementDocument* status = nullptr;
++        static std::string shown;
++        const std::string text = melee_nx_slippi_status_text();
++        auto* context = aurora::rmlui::get_context();
++        if (!status && !text.empty() && context) {
++            status = context->LoadDocumentFromMemory(
++                "<rml><head><style>body { font-family: \"Liberation Sans\"; font-size: 22dp; color: #ffffff; "
++                "background-color: #0b101cee; position: absolute; left: 0dp; right: 0dp; bottom: 48dp; margin: auto; "
++                "width: 720dp; height: auto; padding: 14dp 20dp; border-radius: 8dp; text-align: center; "
++                "pointer-events: none; z-index: 90; }</style></head><body><span id=\"text\"></span></body></rml>");
++        }
++        if (status && text != shown) {
++            shown = text;
++            if (text.empty()) {
++                status->Hide();
++            } else {
++                status->GetElementById("text")->SetInnerRML(Rml::StringUtilities::EncodeRml(text));
++                status->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
++            }
++        }
++    }
++#endif
+     port_menu.poll_binding();
+ }
+ 
 diff --git a/src/pc/launcher.h b/src/pc/launcher.h
 index 32c52b8..01776f9 100644
 --- a/src/pc/launcher.h

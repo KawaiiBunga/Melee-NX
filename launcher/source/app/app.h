@@ -57,6 +57,8 @@ public:
 
     // Writes the mod manifest and queues the game; exits the launcher on success.
     void LaunchGame();
+    // Writes the handoff and starts the game. `code`: the Direct opponent; empty searches Unranked.
+    void StartGame(bool slippi, const std::string& code);
 
     bool AppletMode() const;
 

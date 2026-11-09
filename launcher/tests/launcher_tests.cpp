@@ -257,10 +257,20 @@ void TestSignin() {
 
 void TestLaunchHandoff() {
     mnx::launch::Request req{"sdmc:/switch/melee-nx/Melee 1.02.iso", "sdmc:/switch/melee-nx/mods/active.txt",
-                             "sdmc:/switch/melee-nx/melee-nx-launcher.nro"};
+                             "sdmc:/switch/melee-nx/melee-nx-launcher.nro", "slippi"};
     const auto parsed = melee_nx::ParseLaunchConfig(mnx::launch::FormatConfig(req));
     CHECK(parsed.present);
     CHECK(parsed.disc == req.bootArg && parsed.mods == req.modsManifest && parsed.returnTo == req.returnTo);
+    CHECK(parsed.mode == "slippi" && parsed.code.empty());
+    req.code = "ABCD#123";
+    CHECK(melee_nx::ParseLaunchConfig(mnx::launch::FormatConfig(req)).code == "ABCD#123");
+    std::string code = " abcd#12 ";
+    CHECK(mnx::launch::NormalizeConnectCode(code) && code == "ABCD#12");
+    for (const char* bad : {"", "ABCD", "#123", "ABCDEFGHI#1", "AB#1234", "AB#1A", "A B#C", "AB##1", "AB-C#1"}) {
+        std::string b = bad;
+        CHECK(!mnx::launch::NormalizeConnectCode(b));
+    }
+    CHECK(melee_nx::ParseLaunchConfig("disc=x\n").mode.empty());  // older launch.cfg: vanilla
     const auto empty = melee_nx::ParseLaunchConfig("# nothing\nmods=\n");
     CHECK(!empty.present);
     const auto crlf = melee_nx::ParseLaunchConfig("disc=@melee-nx-loose\r\nmods=\r\nreturn=\r\n");

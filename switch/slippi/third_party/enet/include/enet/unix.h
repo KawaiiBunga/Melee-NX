@@ -13,6 +13,9 @@
 #include <unistd.h>
 #ifdef __SWITCH__
 #include <arpa/inet.h> /* melee-nx: libnx's newlib declares htons/htonl here only */
+#ifndef HAS_SOCKLEN_T
+#define HAS_SOCKLEN_T 1 /* and has socklen_t, which unix.c would otherwise redefine */
+#endif
 #endif
 
 #ifdef MSG_MAXIOVLEN

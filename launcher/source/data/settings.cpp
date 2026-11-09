@@ -56,6 +56,8 @@ Settings LoadSettings() {
     s.quickLaunch = j.value("quickLaunch", s.quickLaunch);
     s.returnToLauncher = j.value("returnToLauncher", s.returnToLauncher);
     s.discPath = j.value("discPath", s.discPath);
+    s.mode = j.value("mode", s.mode) == 1 ? 1 : 0;
+    s.opponentCode = j.value("opponentCode", s.opponentCode);
     return s;
 }
 
@@ -64,7 +66,9 @@ bool SaveSettings(const Settings& s) {
                               {"modsEnabled", s.modsEnabled},
                               {"quickLaunch", s.quickLaunch},
                               {"returnToLauncher", s.returnToLauncher},
-                              {"discPath", s.discPath}};
+                              {"discPath", s.discPath},
+                              {"mode", s.mode},
+                              {"opponentCode", s.opponentCode}};
     return WriteFileAtomic(paths::kSettings, j.dump(2) + "\n");
 }
 

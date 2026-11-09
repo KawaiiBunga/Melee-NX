@@ -66,7 +66,13 @@ two options from `builder/prepare-deko.py` (idempotent, applied by `build-graphi
 | [melee-switch-gcc-compat.patch](melee-switch-gcc-compat.patch) | Platform and launcher compatibility, file cache, audio, and extracted-data boot wiring; the launcher's mod overlay (`MELEE_MODS_MANIFEST` in `file_cache.cpp`, see [docs/LAUNCHER.md](../../docs/LAUNCHER.md#how-the-game-applies-mods)) |
 | [melee-switch-disc-ptr-window.patch](melee-switch-disc-ptr-window.patch) | Adds MEM1-window pointer encoding/resolution and converts raw disc-slot casts to `DP()` |
 | [melee-switch-input-worker.patch](melee-switch-input-worker.patch) | Avoids creating an unused auxiliary SDL input worker on Switch; `PADRead` remains on the main thread |
+| [melee-switch-rollback-hooks.patch](melee-switch-rollback-hooks.patch) | Rollback self-test hooks in the engine loop (`gm_801A4D34`): body begin/end and the pad renew point; inert unless perf.cfg `rollback_selftest` is set (see [docs/SLIPPI.md](../../docs/SLIPPI.md#rollback-self-test)) |
 | [melee-switch-perf-telemetry.patch](melee-switch-perf-telemetry.patch) | Entry-point rename, shared logging, OS compatibility, and frame telemetry |
+| [melee-switch-slippi-hooks.patch](melee-switch-slippi-hooks.patch) | Slippi online play: pad sampling, match start and exit, the lobby call, and Slippi's gameplay codes at their sites (see [docs/SLIPPI.md](../../docs/SLIPPI.md#how-online-play-is-built)); inert outside an online match |
+
+Slippi hunks for files another patch already owns live in that patch: `fighter.c`, `ftlib.c` and
+`ftparts.c` in disc-ptr-window, `gmscene.c` in rollback-hooks, `os.c` and `vi.c` in
+perf-telemetry, and `launcher.cpp` (the status line) in gcc-compat.
 
 ## Build dependencies
 

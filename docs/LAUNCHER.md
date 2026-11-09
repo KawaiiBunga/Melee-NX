@@ -56,8 +56,15 @@ to start the game.
 | X | Mods page only: move the focused mod up in priority |
 | Touch | Tap anything |
 
-**Play** shows whether the game is ready and how many mods will load. *Load mods* is the master
-switch: turn it off to play vanilla without changing your mod list.
+**Play** has two cards, **Vanilla** and **Slippi**. Select one with A; pressing A on the
+selected card (or Play, or +) starts it. The choice is saved and passed to the game as `mode=` in
+`launch.cfg` (the game sets `MELEE_NX_MODE`).
+
+Slippi needs a signed-in account. Starting it asks for the opponent's connect code (`ABCD#123`),
+remembers it for next time and passes it as `code=`. In the game, VS Mode > Melee then plays that
+opponent online; see [SLIPPI.md](SLIPPI.md#playing-online-direct-mode).
+
+*Load mods* is the master switch: turn it off to play without changing your mod list.
 
 **Mods** lists every installed mod. See [Mods](#mods).
 
@@ -202,8 +209,9 @@ The sign-in page response leaves it out too.
 
 ### Online play
 
-Online play is not in this build. Matchmaking and rollback netcode need the game-side Slippi layer
-first, and that is still being ported. Status and plan: [SLIPPI.md](SLIPPI.md).
+Slippi mode plays Direct matches against the connect code you enter when starting it. It is built
+but has not been played against Slippi Dolphin yet. How to play, what is and is not ported, and
+what to check in the log: [SLIPPI.md](SLIPPI.md).
 
 ## How the launcher starts the game
 
@@ -217,10 +225,14 @@ When you press Play, the launcher does the following:
    disc=sdmc:/switch/melee-nx/GALE01.iso
    mods=sdmc:/switch/melee-nx/mods/active.txt
    return=sdmc:/switch/melee-nx/melee-nx-launcher.nro
+   mode=vanilla
+   code=
    ```
 
    `disc` is the disc image, or `@melee-nx-loose` to boot from the extracted files. `mods` and
-   `return` may be empty.
+   `return` may be empty. `mode` is `vanilla` or `slippi`; a file without it means vanilla.
+   `code` is the opponent's connect code in Slippi mode (the game sets `MELEE_NX_SLIPPI_CODE`),
+   empty otherwise.
 3. It queues the game with `envSetNextLoad("<melee.nro>", "<melee.nro> --launch")` and exits. The
    Homebrew loader then starts the game.
 

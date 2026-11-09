@@ -15,7 +15,13 @@ struct Request {
     std::string bootArg;       // disc image path or the loose-boot sentinel
     std::string modsManifest;  // empty: no mods
     std::string returnTo;      // the launcher NRO to reopen when the game exits; empty: none
+    std::string mode = "vanilla";  // "vanilla" or "slippi"
+    std::string code;              // Slippi: the opponent's connect code (Direct mode)
 };
+
+// A Slippi connect code as typed ("abcd#123") to its canonical form ("ABCD#123"): up to eight
+// letters or digits, '#', up to three digits. False when it is not one.
+bool NormalizeConnectCode(std::string& code);
 
 // Renders launch.cfg's text. Values never contain newlines (they are SD paths).
 std::string FormatConfig(const Request& r);

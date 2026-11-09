@@ -1,0 +1,175 @@
+diff --git a/src/melee/gm/gmscene.c b/src/melee/gm/gmscene.c
+index e07bc9e..027b4cb 100644
+--- a/src/melee/gm/gmscene.c
++++ b/src/melee/gm/gmscene.c
+@@ -1,4 +1,7 @@
+ #include "gmscene.h"
++#ifdef __SWITCH__
++#include "slippi_game.h" /* melee-nx: Slippi online (switch/slippi/game) */
++#endif
+ #ifdef TARGET_PC
+ #include "pc/widescreen.h"
+ #endif
+@@ -17,6 +20,7 @@
+ #include <melee/lb/lbheap.h>
+ #include <sysdolphin/baselib/class.h>
+ #include <sysdolphin/baselib/controller.h>
++#include <sysdolphin/baselib/devcom.h>
+ #include <sysdolphin/baselib/gobjproc.h>
+ #include <sysdolphin/baselib/hsd_3924.h>
+ #include <sysdolphin/baselib/hsd_392C.h>
+@@ -278,6 +282,63 @@ static inline u64 maybe_gm_801A48A4(u8 i)
+     }
+ }
+ 
++#ifdef __SWITCH__
++/* melee-nx rollback groundwork (switch/src/rollback_switch.h): snapshots are only taken or
++ * restored while no disc request is in flight and the scene is not ending. */
++#include "rollback_switch.h"
++#include <string.h>
++#include <melee/ft/types.h>
++#include <melee/pl/player.h>
++#include <sysdolphin/baselib/random.h>
++extern StaticPlayer player_slots[];
++extern u32* HSD_RandSeedPtr;
++struct gm_80479D58_t* melee_nx_engine_state(void)
++{
++    return &gm_80479D58;
++}
++static int melee_nx_rb_safe(int scene_ending)
++{
++    /* The self-test never runs in an online match, which keeps its own savestates. */
++    return !scene_ending && !melee_nx_online_active() && !HSD_DevComIsBusy(0) && !HSD_DevComIsBusy(1) &&
++           !HSD_DevComIsBusy(2) && !HSD_DevComIsBusy(3);
++}
++/* Slippi's gameplay checksum, as Melee Unlocked computes it (shim/mu_online.c compute_checksum):
++ * every fighter's action, position and percent, and every player's stocks; plus the RNG seed. */
++static u32 melee_nx_rb_float_bits(float f)
++{
++    u32 v;
++    memcpy(&v, &f, 4);
++    return v;
++}
++static u32 melee_nx_rb_checksum(void)
++{
++    u32 acc = 0;
++    float sum = 0.0F;
++    int i, k;
++    for (i = 0; i < 4; i++) {
++        for (k = 0; k < 2; k++) {
++            HSD_GObj* gobj = player_slots[i].player_entity[k];
++            Fighter* fp;
++            if (gobj == NULL) {
++                continue;
++            }
++            fp = gobj->user_data;
++            acc ^= (u32) fp->motion_id;
++            acc ^= melee_nx_rb_float_bits(fp->cur_pos.x);
++            acc ^= melee_nx_rb_float_bits(fp->cur_pos.y);
++            acc ^= melee_nx_rb_float_bits(fp->dmg.x1830_percent);
++            acc ^= (u32) fp->x8_spawnNum;
++            sum = sum + fp->cur_pos.x;
++            sum = sum + fp->cur_pos.y;
++            sum = sum + fp->dmg.x1830_percent;
++        }
++        acc ^= (u8) player_slots[i].stocks;
++    }
++    acc ^= *HSD_RandSeedPtr;
++    return (((acc >> 16) ^ (acc & 0xFFFF)) << 16) | ((u32) (s32) sum & 0xFFFF);
++}
++#endif
++
+ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
+ {
+     int pad_queue_count;
+@@ -299,9 +360,21 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
+         hsd_80392E80();
+         gmMainLib_8046B0F0.xC = false;
+ 
++#ifdef __SWITCH__
++        /* Slippi online, ForceEngineOnRollback: a rollback drives the engine without a new pad
++         * sample. Offline this is the plain wait. */
++        for (;;) {
++            pad_queue_count = lb_80019894();
++            if (melee_nx_online_engine_gate(&pad_queue_count)) {
++                break;
++            }
++            lb_800195D0();
++        }
++#else
+         while ((pad_queue_count = lb_80019894()) == 0) {
+             lb_800195D0();
+         }
++#endif
+         lb_800195D0();
+ 
+         if (HSD_PadGetResetSwitch()) {
+@@ -310,8 +383,25 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
+         }
+ 
+         for (i = 0; i < pad_queue_count; i++) {
++#ifdef __SWITCH__
++        melee_nx_rb_body:
++#endif
+             HSD_PerfSetStartTime();
++#ifdef __SWITCH__
++            /* Slippi online, StartEngineLoop: rollback loads, checksums, savestates. */
++            melee_nx_online_frame_begin();
++            /* A re-simulated body takes the pads recorded for it instead of renewing them. */
++            if (melee_nx_rb_body_begin(melee_nx_rb_safe(temp_r25->unk_C != 0))) {
++                melee_nx_rb_pads(&HSD_PadLibData, sizeof HSD_PadLibData, HSD_PadMasterStatus,
++                                 sizeof HSD_PadMasterStatus, 1);
++            } else {
++                lb_800198E0();
++                melee_nx_rb_pads(&HSD_PadLibData, sizeof HSD_PadLibData, HSD_PadMasterStatus,
++                                 sizeof HSD_PadMasterStatus, 0);
++            }
++#else
+             lb_800198E0();
++#endif
+             if (DbLevel >= DbLKind_DebugRom) {
+                 gm_801A4970(&temp_r25->unk_10.db_input);
+             }
+@@ -368,10 +458,33 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
+                 OSCheckActiveThreads();
+             }
+             gmMainLib_8046B0F0.xC = false;
++#ifdef __SWITCH__
++            /* Run the next re-simulated body now, without drawing (rollback self-test). */
++            if (melee_nx_rb_body_end(melee_nx_rb_safe(temp_r25->unk_C != 0), melee_nx_rb_checksum())) {
++                goto melee_nx_rb_body;
++            }
++#endif
+             if (temp_r25->unk_C != 0) {
+                 break;
+             }
++#ifdef __SWITCH__
++            /* Slippi online, LoopEngineForRollback: re-run the body for the next frame of a
++             * rollback without drawing, or leave for the render once the rollback is done. */
++            switch (melee_nx_online_frame_end()) {
++            case 1:
++                i++;
++                goto melee_nx_rb_body;
++            case 2:
++                i++;
++                goto melee_nx_online_rollback_done;
++            default:
++                break;
++            }
++#endif
+         }
++#ifdef __SWITCH__
++    melee_nx_online_rollback_done:
++#endif
+         if (temp_r25->unk_C == 2) {
+             break;
+         }
+@@ -391,5 +504,8 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
+         HSD_PerfSetTotalTime();
+         HSD_PerfInitStat();
+     }
++#ifdef __SWITCH__
++    melee_nx_online_scene_loop_exit();
++#endif
+     HSD_VIWaitXFBFlush();
+ }

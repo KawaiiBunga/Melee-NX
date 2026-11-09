@@ -1,0 +1,918 @@
+diff --git a/src/melee/ft/ft_0D31.c b/src/melee/ft/ft_0D31.c
+index 3a1f4d2..0020cac 100644
+--- a/src/melee/ft/ft_0D31.c
++++ b/src/melee/ft/ft_0D31.c
+@@ -1,4 +1,7 @@
+ #include "ft_0D31.h"
++#ifdef __SWITCH__
++#include "slippi_game.h" /* melee-nx: Slippi online (switch/slippi/game) */
++#endif
+ 
+ #include "fighter.h"
+ #include "ft_0877.h"
+@@ -858,6 +861,17 @@ void ftCo_DeadUpFall_Anim(Fighter_GObj* gobj)
+             fp->self_vel.z = data->x55C;
+             fp->mv.co.unk_deadup.x40 = data->x530;
+             fp->mv.co.unk_deadup.x44 = 3;
++#ifdef __SWITCH__
++            /* Slippi online code "FreezeDeadUpFallPhysics" (800d4c1c): the fall keeps its own y
++             * and z velocity in the state variables at 0x2348 and 0x234C and the fighter's
++             * velocity is zeroed. */
++            if (melee_nx_online_codes()) {
++                float vy = data->x550;
++                memcpy(fp->mv.co.unk_deadup.pad_x48, &vy, 4);
++                fp->mv.co.unk_deadup.x4C = data->x55C;
++                fp->self_vel.x = fp->self_vel.y = fp->self_vel.z = 0;
++            }
++#endif
+             return;
+         case 3:
+             ftCommon_8007E2FC(gobj);
+@@ -902,8 +916,27 @@ void ftCo_DeadUpFall_Phys(Fighter_GObj* gobj)
+                       fp->mv.co.unk_deadup.x4C);
+         break;
+     case 3:
++#ifdef __SWITCH__
++        /* Slippi online code "FreezeDeadUpFallPhysics" (800d4d68): the fall velocity kept in
++         * the state variables, not the fighter's. */
++        if (melee_nx_online_codes()) {
++            float vy, terminal = -ca->x558;
++            memcpy(&vy, fp->mv.co.unk_deadup.pad_x48, 4);
++            vy = (float) ((double) vy - (double) ca->x554);
++            if (!(vy > terminal)) {
++                vy = terminal;
++            }
++            memcpy(fp->mv.co.unk_deadup.pad_x48, &vy, 4);
++            fp->mv.co.unk_deadup.x5C.y = fp->mv.co.unk_deadup.x5C.y + vy;
++            fp->mv.co.unk_deadup.x5C.z = fp->mv.co.unk_deadup.x4C + fp->mv.co.unk_deadup.x5C.z;
++        } else {
++            ftCommon_Fall(fp, ca->x554, ca->x558);
++            lbVector_Add(&fp->mv.co.unk_deadup.x5C, &fp->self_vel);
++        }
++#else
+         ftCommon_Fall(fp, ca->x554, ca->x558);
+         lbVector_Add(&fp->mv.co.unk_deadup.x5C, &fp->self_vel);
++#endif
+         if (fp->x2222_b6) {
+             if (!ftAnim_80070FD0(fp)) {
+                 break;
+diff --git a/src/melee/ft/ftdrawcommon.c b/src/melee/ft/ftdrawcommon.c
+index 5a37329..9f69ba5 100644
+--- a/src/melee/ft/ftdrawcommon.c
++++ b/src/melee/ft/ftdrawcommon.c
+@@ -1,4 +1,7 @@
+ #include "ftdrawcommon.h"
++#ifdef __SWITCH__
++#include "slippi_game.h" /* melee-nx: Slippi online (switch/slippi/game) */
++#endif
+ 
+ #include <Runtime/platform.h>
+ 
+@@ -368,6 +371,16 @@ static inline void ftDrawCommon_80080E18_inline2(HSD_GObj* gobj, Fighter* old)
+     Vec3* pos;
+ 
+     MtxPtr matrix = HSD_CObjGetInvViewingMtxPtr(Camera_800310B8());
++#ifdef __SWITCH__
++    /* Slippi online code "FreezeDeadUpFallPhysics" (80080e80): the model moves with the
++     * camera, the physics position does not. */
++    if (melee_nx_online_codes()) {
++        Vec3 model_pos;
++        PSMTXMultVec(matrix, (Vec3*) &old->mv.co.walk.fast_anim_frame, &model_pos);
++        HSD_JObjSetTranslate(jobj, &model_pos);
++        return;
++    }
++#endif
+     /// @todo this seems to be using the wrong common attributes
+     PSMTXMultVec(matrix, (Vec3*) &old->mv.co.walk.fast_anim_frame,
+                  &fp->cur_pos);
+diff --git a/src/melee/ft/ftdynamics.c b/src/melee/ft/ftdynamics.c
+index 6422b35..d1f0496 100644
+--- a/src/melee/ft/ftdynamics.c
++++ b/src/melee/ft/ftdynamics.c
+@@ -1,4 +1,7 @@
+ #include "ftdynamics.h"
++#ifdef __SWITCH__
++#include "slippi_game.h" /* melee-nx: Slippi online (switch/slippi/game) */
++#endif
+ 
+ 
+ 
+@@ -371,6 +374,22 @@ void ftCo_8009DC54(Fighter* fp)
+     }
+ }
+ 
++#ifdef __SWITCH__
++/* Slippi's "Common/FastForward/DynamicsFix" (Required in Slippi Online): every joint of the
++ * fighter's tree that is dirty and not user-defined is set up, a joint, then its children, then
++ * its next sibling. After it the fighter's matrices are current on every frame its dynamics run;
++ * without it, gameplay reading a raw matrix before the draw saw the previous frame's. */
++static void melee_nx_dynamics_fix(HSD_JObj* jobj)
++{
++    for (; jobj != NULL; jobj = jobj->next) {
++        if (HSD_JObjMtxIsDirty(jobj)) {
++            HSD_JObjSetupMatrixSub(jobj);
++        }
++        melee_nx_dynamics_fix(jobj->child);
++    }
++}
++#endif
++
+ void ftCo_8009DD94(Fighter_GObj* gobj, bool arg1)
+ {
+     Fighter* fp = GET_FIGHTER(gobj);
+@@ -443,6 +462,11 @@ void ftCo_8009DD94(Fighter_GObj* gobj, bool arg1)
+             dyn++;
+         }
+     }
++#ifdef __SWITCH__
++    if (melee_nx_online_codes()) {
++        melee_nx_dynamics_fix(GET_JOBJ(gobj));
++    }
++#endif
+ }
+ 
+ void ftCo_8009E0A8(Fighter_GObj* gobj)
+diff --git a/src/melee/ft/kinds/ftCommon/ftCo_CaptureWait.c b/src/melee/ft/kinds/ftCommon/ftCo_CaptureWait.c
+index cdf0b12..7f73c4d 100644
+--- a/src/melee/ft/kinds/ftCommon/ftCo_CaptureWait.c
++++ b/src/melee/ft/kinds/ftCommon/ftCo_CaptureWait.c
+@@ -1,4 +1,7 @@
+ #include "ftCo_Attack100.h"
++#ifdef __SWITCH__
++#include "slippi_game.h" /* melee-nx: Slippi online (switch/slippi/game) */
++#endif
+ #include "ftCo_CaptureCut.h"
+ #include <melee/ft/fighter.h>
+ #include <melee/ft/ft_081B.h>
+@@ -93,6 +96,9 @@ void fn_800DB790(Fighter_GObj* gobj)
+     }
+ 
+     ftCommon_8007E2F4(fp, 0x1FF);
++#ifdef __SWITCH__
++    melee_nx_wobble_reset(fp); /* Slippi online, PreventWobbling */
++#endif
+ }
+ 
+ void fn_800DB8A4(Fighter_GObj* gobj)
+@@ -187,6 +193,9 @@ void fn_800DBAE4(Fighter_GObj* gobj)
+     }
+ 
+     ftCommon_8007E2F4(fp, 0x1FF);
++#ifdef __SWITCH__
++    melee_nx_wobble_reset(fp); /* Slippi online, PreventWobbling */
++#endif
+ }
+ 
+ static inline void fn_800DBBF8_noinline(Fighter_GObj* gobj1, Fighter* gobj2)
+diff --git a/src/melee/ft/kinds/ftCommon/ftCo_Damage.c b/src/melee/ft/kinds/ftCommon/ftCo_Damage.c
+index b0d26c4..da23c08 100644
+--- a/src/melee/ft/kinds/ftCommon/ftCo_Damage.c
++++ b/src/melee/ft/kinds/ftCommon/ftCo_Damage.c
+@@ -1,4 +1,7 @@
+ #include "ftCo_Damage.h"
++#ifdef __SWITCH__
++#include "slippi_game.h" /* melee-nx: Slippi online (switch/slippi/game) */
++#endif
+ 
+ #include <Runtime/platform.h>
+ 
+@@ -506,7 +509,11 @@ void ftCo_Damage_OnEveryHitlag(Fighter_GObj* gobj)
+         VEC2_SQ_LEN(fp->input.lstick[0]) >=
+             SQ(p_ftCommonData->sdi_min_stick_mag) &&
+         (fp->active_timer.lstick.x < p_ftCommonData->sdi_stick_window ||
+-         fp->active_timer.lstick.y < p_ftCommonData->sdi_stick_window))
++         fp->active_timer.lstick.y < p_ftCommonData->sdi_stick_window
++#ifdef __SWITCH__
++         || melee_nx_ucf_sdi(fp) /* Slippi online, UCF 0.84 SDI */
++#endif
++         ))
+     {
+         float scaled_lstick_x =
+             fp->input.lstick[0].x * p_ftCommonData->sdi_pos_scale;
+@@ -744,6 +751,30 @@ static inline void inlineB2(Fighter_GObj* gobj)
+     ftCommon_800804FC(fp);
+ }
+ 
++#ifdef __SWITCH__
++/* inlineB2 for the grabbed-fighter hit path, with Slippi's PreventWobbling check after
++ * ftCo_800C8D00: a grab the check broke skips the capture-damage states. */
++static inline void melee_nx_inlineB2_wobble(Fighter_GObj* gobj)
++{
++    Fighter* fp = gobj->user_data;
++    ftCo_800C8D00(gobj);
++    if (!melee_nx_wobble_check(gobj)) {
++        if (fp->motion_id == 0xe0 || fp->motion_id == 0xe1) {
++            ftCo_800DC284(gobj);
++        }
++        if (fp->motion_id == 0xe3 || fp->motion_id == 0xe4) {
++            ftCo_800DC3A4(gobj);
++        }
++    }
++    if (ftCo_8008DA4C(gobj, fp->dmg.x1860_element,
++                      ftCo_8008D8E8(fp->dmg.kb_applied * p_ftCommonData->x154)))
++    {
++        ftCo_800C0408(gobj);
++    }
++    ftCommon_800804FC(fp);
++}
++#endif
++
+ static inline void inlineB4(Fighter_GObj* gobj)
+ {
+     ftCo_8008E9D0(gobj);
+@@ -821,7 +852,11 @@ void ftCo_8008EC90(Fighter_GObj* gobj)
+                         }
+                     }
+                     fp->input.pressed_buttons = fp->input.released_buttons = 0;
++#ifdef __SWITCH__
++                    melee_nx_inlineB2_wobble(gobj);
++#else
+                     inlineB2(gobj);
++#endif
+                     goto ret_A8C;
+                 }
+                 {
+diff --git a/src/melee/ft/kinds/ftCommon/ftCo_DamageFall.c b/src/melee/ft/kinds/ftCommon/ftCo_DamageFall.c
+index 3b09b9f..e61eebe 100644
+--- a/src/melee/ft/kinds/ftCommon/ftCo_DamageFall.c
++++ b/src/melee/ft/kinds/ftCommon/ftCo_DamageFall.c
+@@ -1,4 +1,7 @@
+ #include "ftCo_DamageFall.h"
++#ifdef __SWITCH__
++#include "slippi_game.h" /* melee-nx: Slippi online (switch/slippi/game) */
++#endif
+ 
+ #include <Runtime/platform.h>
+ 
+@@ -123,7 +126,13 @@ void ftCo_DamageFall_IASA(HSD_GObj* gobj)
+         RETURN_IF(ftCo_800D705C(gobj));
+         RETURN_IF(ftCo_800CB870(gobj));
+         if (ABS(fp->input.lstick[0].x) >= p_ftCommonData->x210 &&
++#ifdef __SWITCH__
++            /* Slippi online, UCF 0.84 tumble wiggle. */
++            (melee_nx_online_codes() ? melee_nx_ucf_tumble_wiggle(fp)
++                                     : fp->active_timer.lstick.x < p_ftCommonData->x214))
++#else
+             fp->active_timer.lstick.x < p_ftCommonData->x214)
++#endif
+         {
+             ftCo_Fall_Enter(gobj);
+             return;
+diff --git a/src/melee/ft/kinds/ftCommon/ftCo_Escape.c b/src/melee/ft/kinds/ftCommon/ftCo_Escape.c
+index b3de9d9..ae4472a 100644
+--- a/src/melee/ft/kinds/ftCommon/ftCo_Escape.c
++++ b/src/melee/ft/kinds/ftCommon/ftCo_Escape.c
+@@ -1,4 +1,7 @@
+ #include "ftCo_Escape.h"
++#ifdef __SWITCH__
++#include "slippi_game.h" /* melee-nx: Slippi online (switch/slippi/game) */
++#endif
+ 
+ #include <Runtime/platform.h>
+ 
+@@ -211,6 +214,13 @@ bool ftCo_80099794(Fighter_GObj* gobj)
+ {
+     Fighter* fp = gobj->user_data;
+     if (fp->input.held_buttons[0] & HSD_PAD_LR && inlineB0(fp)) {
++#ifdef __SWITCH__
++        /* Slippi online, UCF 0.84 shield drop: the spot dodge is cancelled at its start and
++         * this check reports none, leaving the input to the shield drop check. */
++        if (melee_nx_ucf_shield_drop(fp)) {
++            return false;
++        }
++#endif
+         ftCo_80099894(gobj);
+         return true;
+     }
+@@ -221,6 +231,11 @@ bool ftCo_8009980C(Fighter_GObj* gobj)
+ {
+     Fighter* fp = gobj->user_data;
+     if (inlineB0(fp) || ftCo_800DF8E8(fp)) {
++#ifdef __SWITCH__
++        if (melee_nx_ucf_shield_drop(fp)) {
++            return false; /* UCF 0.84 shield drop (see above) */
++        }
++#endif
+         ftCo_80099894(gobj);
+         return true;
+     }
+diff --git a/src/melee/ft/kinds/ftCommon/ftCo_Guard.c b/src/melee/ft/kinds/ftCommon/ftCo_Guard.c
+index b38f694..c85a9d1 100644
+--- a/src/melee/ft/kinds/ftCommon/ftCo_Guard.c
++++ b/src/melee/ft/kinds/ftCommon/ftCo_Guard.c
+@@ -1,4 +1,7 @@
+ #include "ftCo_Guard.h"
++#ifdef __SWITCH__
++#include "slippi_game.h" /* melee-nx: Slippi online (switch/slippi/game) */
++#endif
+ 
+ #include <math.h>
+ 
+@@ -721,7 +724,11 @@ void ftCo_80093240(Fighter_GObj* gobj)
+         if ((fp->input.lstick[0].x < 0 ? -fp->input.lstick[0].x
+                                        : fp->input.lstick[0].x) >=
+                 p_ftCommonData->sdi_min_stick_mag &&
+-            fp->active_timer.lstick.x < p_ftCommonData->sdi_stick_window)
++            (fp->active_timer.lstick.x < p_ftCommonData->sdi_stick_window
++#ifdef __SWITCH__
++             || melee_nx_ucf_shield_sdi(fp) /* Slippi online, UCF 0.84 shield SDI */
++#endif
++             ))
+         {
+             float scl = p_ftCommonData->x4C0 * (fp->input.lstick[0].x *
+                                                 p_ftCommonData->sdi_pos_scale);
+diff --git a/src/melee/ft/kinds/ftCommon/ftCo_Pass.c b/src/melee/ft/kinds/ftCommon/ftCo_Pass.c
+index 2a21bfd..cdae9fa 100644
+--- a/src/melee/ft/kinds/ftCommon/ftCo_Pass.c
++++ b/src/melee/ft/kinds/ftCommon/ftCo_Pass.c
+@@ -1,4 +1,7 @@
+ #include "ftCo_Pass.h"
++#ifdef __SWITCH__
++#include "slippi_game.h" /* melee-nx: Slippi online (switch/slippi/game) */
++#endif
+ 
+ #include <Runtime/platform.h>
+ 
+@@ -54,7 +57,17 @@ bool ftCo_8009A080(Fighter_GObj* gobj)
+ {
+     u8 _[8];
+     Fighter* fp = gobj->user_data;
++#ifdef __SWITCH__
++    /* Slippi online, UCF 0.84 "Shield Drop Extended" patches only this caller's copy of the
++     * check: a stick short of the threshold also counts once the pad buffer has seen a fast
++     * downward flick for two frames. */
++    if (fp->input.held_buttons[0] & HSD_PAD_LR &&
++        (fp->input.lstick[0].y <= -p_ftCommonData->x464 || melee_nx_ucf_shield_drop_extended(fp)) &&
++        fp->active_timer.lstick.y < p_ftCommonData->x468 && mpColl_IsOnPlatform(&fp->coll_data))
++    {
++#else
+     if (fp->input.held_buttons[0] & HSD_PAD_LR && ftCo_80099F1C(gobj)) {
++#endif
+         ftCo_8009A228(gobj);
+         return true;
+     }
+diff --git a/src/melee/ft/kinds/ftCommon/ftCo_SquatRv.c b/src/melee/ft/kinds/ftCommon/ftCo_SquatRv.c
+index ad0b0f3..a6bb978 100644
+--- a/src/melee/ft/kinds/ftCommon/ftCo_SquatRv.c
++++ b/src/melee/ft/kinds/ftCommon/ftCo_SquatRv.c
+@@ -1,4 +1,7 @@
+ #include "ftCo_SquatRv.h"
++#ifdef __SWITCH__
++#include "slippi_game.h" /* melee-nx: Slippi online (switch/slippi/game) */
++#endif
+ 
+ #include <Runtime/platform.h>
+ 
+@@ -31,7 +34,12 @@
+ bool ftCo_SquatRv_CheckInput(Fighter_GObj* gobj)
+ {
+     Fighter* fp = GET_FIGHTER(gobj);
++#ifdef __SWITCH__
++    /* Slippi online, UCF 0.84 crouch dashback fix. */
++    if (fp->input.lstick[0].y > -melee_nx_ucf_squatrv_threshold(fp, p_ftCommonData->x94)) {
++#else
+     if (fp->input.lstick[0].y > -p_ftCommonData->x94) {
++#endif
+         ftCo_SquatRv_Enter(gobj);
+         return true;
+     }
+diff --git a/src/melee/ft/kinds/ftCommon/ftCo_Turn.c b/src/melee/ft/kinds/ftCommon/ftCo_Turn.c
+index 425b0c3..365b3f6 100644
+--- a/src/melee/ft/kinds/ftCommon/ftCo_Turn.c
++++ b/src/melee/ft/kinds/ftCommon/ftCo_Turn.c
+@@ -1,4 +1,7 @@
+ #include "ftCo_Turn.h"
++#ifdef __SWITCH__
++#include "slippi_game.h" /* melee-nx: Slippi online (switch/slippi/game) */
++#endif
+ 
+ #include <melee/ft/forward.h>
+ 
+@@ -103,6 +106,9 @@ void ftCo_Turn_IASA(Fighter_GObj* gobj)
+     }
+     if (!fp->mv.co.turn.has_turned) {
+         fp->facing_dir = -fp->facing_dir;
++#ifdef __SWITCH__
++        melee_nx_ucf_dashback(fp); /* Slippi online, UCF 0.84 dashback */
++#endif
+     }
+ 
+     RETURN_IF(ftCo_SpecialS_CheckInput(gobj));
+diff --git a/src/melee/ft/kinds/ftNana/ftnanaspecials.c b/src/melee/ft/kinds/ftNana/ftnanaspecials.c
+index 5176082..1c6e430 100644
+--- a/src/melee/ft/kinds/ftNana/ftnanaspecials.c
++++ b/src/melee/ft/kinds/ftNana/ftnanaspecials.c
+@@ -1,4 +1,7 @@
+ #include <Runtime/platform.h>
++#ifdef __SWITCH__
++#include "slippi_game.h" /* melee-nx: Slippi online (switch/slippi/game) */
++#endif
+ 
+ #include <melee/ft/forward.h>
+ 
+@@ -63,7 +66,13 @@ bool ftNn_Init_80123954(Fighter_GObj* nana_gobj, GroundOrAir pp_ga)
+         case 11:
+         case 12:
+         case 13:
++#ifdef __SWITCH__
++            if (!melee_nx_online_codes()) { /* Slippi online, "FreezeGlitchFix" */
++                nana_fp->x1A5C = NULL;
++            }
++#else
+             nana_fp->x1A5C = NULL;
++#endif
+             ret = true;
+             break;
+         default: {
+diff --git a/src/melee/gm/gmboot.c b/src/melee/gm/gmboot.c
+index 3f9f9cd..6e21a9a 100644
+--- a/src/melee/gm/gmboot.c
++++ b/src/melee/gm/gmboot.c
+@@ -1,5 +1,8 @@
+ 
+ #include "gm_unsplit.h"
++#ifdef __SWITCH__
++#include "slippi_game.h" /* melee-nx: Slippi online (switch/slippi/game) */
++#endif
+ #include "gmmain_lib.h"
+ #include "types.h"
+ #include <melee/lb/lbcardgame.h>
+@@ -78,7 +81,12 @@ void bootOnLeave(GameModeState* data)
+ 
+     // Enter mode
+     // Gekko "boot to CSS" code changes scene_id to a hardcoded 2 (::GM_VS)
++#ifdef __SWITCH__
++    /* Slippi mode: straight to VS mode's character select. */
++    gm_ChangeGameModeAfterCurrentScene(melee_nx_online_boot_mode(scene_data->mode_id));
++#else
+     gm_ChangeGameModeAfterCurrentScene(scene_data->mode_id);
++#endif
+ }
+ 
+ GameModeState gm_Mode_MemCard_States[] = {
+diff --git a/src/melee/gm/gmvs.c b/src/melee/gm/gmvs.c
+index bba45c0..dc79c0c 100644
+--- a/src/melee/gm/gmvs.c
++++ b/src/melee/gm/gmvs.c
+@@ -1,4 +1,7 @@
+ #include "gmvs.h"
++#ifdef __SWITCH__
++#include "slippi_game.h" /* melee-nx: Slippi online (switch/slippi/game) */
++#endif
+ 
+ #include <Runtime/platform.h>
+ 
+@@ -60,6 +63,78 @@ static u32 lbl_803D5630[] = {
+ };
+ 
+ /* 46B6A0 */ static VsSceneController controller;
++#ifdef __SWITCH__
++/* Slippi online, FN_END_GAME: end the match the way an L+R+A+Start by `pauser` would, with a
++ * shorter GAME! screen. Used on disconnect and on desync. */
++void melee_nx_gmvs_request_online_end(int pauser)
++{
++    controller.state.pauser = (s8) pauser;
++    controller.state.match_result = 7;
++    controller.start.xD = 90;
++}
++#endif
++#ifdef __SWITCH__
++/* Slippi online, FN_END_GAME: end the match the way an L+R+A+Start by `pauser` would, with a
++ * shorter GAME! screen. Used on disconnect and on desync. */
++void melee_nx_gmvs_request_online_end(int pauser)
++{
++    controller.state.pauser = (s8) pauser;
++    controller.state.match_result = 7;
++    controller.start.xD = 90;
++}
++
++/* Slippi online, InitPause (Unranked): Start does not pause. A human port with stocks holding
++ * L+R+A+Start ends the match as LRAS, on both games, since it is read from the synced pads; a
++ * local Start tap only toggles the pause display. */
++static bool melee_nx_lras_display;
++
++static int melee_nx_online_lras_check(void)
++{
++    const u32 lras = HSD_PAD_L | HSD_PAD_R | HSD_PAD_A | HSD_PAD_START;
++    int i, local;
++    for (i = 0; i < 4; i++) {
++        if (Player_GetPlayerSlotType(i) != Gm_PKind_Human || Player_GetStocks(i) == 0) {
++            continue;
++        }
++        if ((HSD_PadMasterStatus[i].button & lras) == lras) {
++            controller.state.pauser = (s8) i;
++            controller.state.match_result = 7;
++            controller.start.xD = 30;
++            ifAll_802F3394();
++            gm_801A10FC(i);
++            return -1;
++        }
++    }
++    local = melee_nx_online_local_port();
++    if (local < 0) {
++        return -1;
++    }
++    if (melee_nx_lras_display) {
++        if (Player_GetStocks(local) == 0 || (HSD_PadMasterStatus[local].trigger & HSD_PAD_START)) {
++            melee_nx_lras_display = false;
++            ifAll_802F33CC();
++            gm_801A10FC(local);
++        }
++    } else if (Player_GetStocks(local) != 0 && (HSD_PadMasterStatus[local].trigger & HSD_PAD_START)) {
++        melee_nx_lras_display = true;
++        ifAll_802F3394();
++        gm_801A0FEC(local, 5);
++        lbAudioAx_80024030(5);
++    }
++    return -1;
++}
++
++static void melee_nx_online_init_pause(void)
++{
++    int mode = melee_nx_online_mode();
++    if (mode <= 0 || mode == 4 || !controller.start.disable_pausing) {
++        return;
++    }
++    controller.start.check_for_pauser_override = melee_nx_online_lras_check;
++    melee_nx_lras_display = false;
++    controller.start.disable_pausing = false;
++}
++#endif
+ 
+ VsSceneController* gmVs_GetSceneController(void)
+ {
+@@ -1955,6 +2030,9 @@ void fn_8016E2BC(void)
+                     }
+                 }
+                 Player_80032768(i, &sp18);
++#ifdef __SWITCH__
++                melee_nx_neutral_spawn(i, controller.start.is_teams); /* Slippi online, NeutralSpawn */
++#endif
+                 is_teams = controller.start.is_teams == true;
+                 Player_SetUnk45(
+                     i, fn_80160840(gm_80160854(Player_GetPlayerId(i),
+@@ -2004,6 +2082,10 @@ void fn_8016E730(StartMeleeData* arg0)
+     VsSceneController* r30;
+ 
+     db_Setup();
++#ifdef __SWITCH__
++    /* Slippi online, InitOnlinePlay: the negotiated match, its seed, delay and pad exchange. */
++    melee_nx_online_start_melee(arg0);
++#endif
+     gm_SetDbPauseInputHandlers(gm_AnyControllerPressedStart,
+                                gm_AnyControllerPressedZ);
+     gm_SetPreGObjProcCallback(db_RunEveryFrame);
+@@ -2012,6 +2094,9 @@ void fn_8016E730(StartMeleeData* arg0)
+     Camera_Init(70);
+     Camera_Create();
+     fn_8016DCC0(arg0);
++#ifdef __SWITCH__
++    melee_nx_online_init_pause();
++#endif
+     lbRefract_800222A4();
+     lb_8000FCDC();
+     efLib_Init();
+@@ -2101,6 +2186,9 @@ void gm_Scene_Vs_OnExit(void* user_data)
+     VsSceneController* tmp = &controller;
+     int i;
+ 
++#ifdef __SWITCH__
++    melee_nx_online_match_exit();
++#endif
+     if (controller.state.match_over == 0) {
+         data->xC = controller.state.x24C;
+         data->xC.is_teams = controller.start.is_teams;
+diff --git a/src/melee/gm/gmvsmelee.c b/src/melee/gm/gmvsmelee.c
+index 1231aa4..2f0ee9f 100644
+--- a/src/melee/gm/gmvsmelee.c
++++ b/src/melee/gm/gmvsmelee.c
+@@ -1,4 +1,7 @@
+ #include "gmvsmelee.h"
++#ifdef __SWITCH__
++#include "slippi_game.h" /* melee-nx: Slippi online (switch/slippi/game) */
++#endif
+ 
+ #include <Runtime/platform.h>
+ 
+@@ -130,6 +133,9 @@ void gmVsMelee_ExitCss(GameModeState* state, VsModeData* vs)
+ {
+     CSSData* css = gm_GetGameModeStateExitData(state);
+     if (css->pending_scene_change == CSSPendingSceneChange_2) {
++#ifdef __SWITCH__
++        melee_nx_online_leave(); /* Slippi online: drop the opponent */
++#endif
+         gm_ChangeGameModeAfterCurrentScene(GM_MENU);
+         return;
+     }
+@@ -160,6 +166,13 @@ void gmVsMelee_ExitSss(GameModeState* state, VsModeData* vs,
+     SSSData* sss = gm_GetGameModeStateExitData(state);
+     if (sss->start_game) {
+         *vs = sss->vs;
++#ifdef __SWITCH__
++        /* Slippi online: find the opponent and take the match both games agreed on. */
++        if (!melee_nx_online_lobby(vs)) {
++            gm_SetNextGameModeStateId(cancel_state_id);
++            return;
++        }
++#endif
+         lbAudioAx_80026F2C(24);
+         lbAudioAx_8002702C(8, lbAudioAx_80026EBC(vs->start.rules.stkind));
+         lbAudioAx_80027168();
+@@ -211,6 +224,14 @@ void gmVsMelee_ExitVs(GameModeState* state, u8 id0, u8 id1)
+     MatchExitInfo* exit = gm_GetGameModeStateExitData(state);
+     ssize_t i;
+ 
++#ifdef __SWITCH__
++    /* Slippi online: an online match goes back to the character select, as on Slippi (no
++     * results screen, no sudden death). */
++    if (melee_nx_online_take_finished()) {
++        gm_SetNextGameModeStateId(0);
++        return;
++    }
++#endif
+     for (i = 0; i < GM_MAX_PLAYERS; i++) {
+         if (exit->match_end.player_standings[i].pkind == Gm_PKind_Human) {
+             gm_80162574(exit->match_end.player_standings[i].ckind,
+diff --git a/src/melee/gr/grlast.c b/src/melee/gr/grlast.c
+index e748999..c3317f3 100644
+--- a/src/melee/gr/grlast.c
++++ b/src/melee/gr/grlast.c
+@@ -1,4 +1,7 @@
+ #include "grlast.h"
++#ifdef __SWITCH__
++#include "slippi_game.h" /* melee-nx: Slippi online (switch/slippi/game) */
++#endif
+ 
+ #include <math.h>
+ 
+@@ -367,6 +370,15 @@ static void grLast_8021AAB0(Ground_GObj* gobj)
+ {
+     Ground* gp = GET_GROUND(gobj);
+     if (!gp->u.map.xC4_b1 && !gp->u.map.xC4_b0) {
++#ifdef __SWITCH__
++        /* Slippi online code "DesyncProofBGTransformations" (8021aae4): the background think
++         * leaves the seed as it found it. */
++        if (melee_nx_online_codes()) {
++            u32 seed = *HSD_RandSeedPtr;
++            grLast_8021B2E8(gobj);
++            *HSD_RandSeedPtr = seed;
++        } else
++#endif
+         grLast_8021B2E8(gobj);
+         if (gp->u.map.xC4_b26) {
+             int tmp = grLast_8021B5C4(gobj);
+diff --git a/src/melee/gr/ground.c b/src/melee/gr/ground.c
+index 406c4ea..87e5b45 100644
+--- a/src/melee/gr/ground.c
++++ b/src/melee/gr/ground.c
+@@ -1,4 +1,7 @@
+ #include "ground.h"
++#ifdef __SWITCH__
++#include "slippi_game.h" /* melee-nx: Slippi online (switch/slippi/game) */
++#endif
+ 
+ #include <Runtime/platform.h>
+ 
+@@ -860,6 +863,12 @@ Ground_GObj* Ground_GetStageGObj(int map_id)
+      * @c on_init writes it sees stale heap contents.
+      */
+     gp = alloc_user_data_ground();
++#ifdef __SWITCH__
++    /* Slippi online code "Init Stage Data" (801c154c): zero the block. */
++    if (gp != NULL && melee_nx_online_codes()) {
++        memset(gp, 0, sizeof(Ground));
++    }
++#endif
+     if (gp == NULL) {
+         HSD_GObjFree(gobj);
+         return NULL;
+diff --git a/src/melee/gr/grpstadium.c b/src/melee/gr/grpstadium.c
+index 4ecece1..6767b3e 100644
+--- a/src/melee/gr/grpstadium.c
++++ b/src/melee/gr/grpstadium.c
+@@ -1,4 +1,7 @@
+ #include "grpstadium.h"
++#ifdef __SWITCH__
++#include "slippi_game.h" /* melee-nx: Slippi online (switch/slippi/game) */
++#endif
+ 
+ #include <sysdolphin/baselib/forward.h>
+ 
+@@ -834,6 +837,26 @@ void grStadium_801D2278(Ground_GObj* gobj)
+     grStadium_801D2528(gobj, 0, 0);
+ }
+ 
++#ifdef __SWITCH__
++#include <melee/ft/types.h>
++bool grStadium_801D32D0(Ground_GObj* gobj);
++/* Slippi online code "PSCameraIndependentMonitor": keep the jumbotron shot while the focused
++ * fighter is inside a fixed box, not the local camera; grStadium_801D32D0 still runs for its
++ * side effects. */
++static bool melee_nx_ps_monitor_ok(Ground_GObj* gobj, int slot)
++{
++    bool ok = grStadium_801D32D0(gobj);
++    if (melee_nx_online_codes()) {
++        Fighter* f = Player_GetEntity(slot)->user_data;
++        float x = f->cur_pos.x, y = f->cur_pos.y;
++        ok = !(x < -120.0F) && !(x > 120.0F) && !(y > 80.0F) && !(y < -20.0F);
++    }
++    return ok;
++}
++#else
++#define melee_nx_ps_monitor_ok(gobj, slot) grStadium_801D32D0(gobj)
++#endif
++
+ void grStadium_801D2344(Ground_GObj* g)
+ {
+     Ground_GObj* gobj = g;
+@@ -903,7 +926,7 @@ void grStadium_801D2344(Ground_GObj* g)
+         temp_r3_8->flag = 0;
+         if (gp->u.display.xDC == NULL ||
+             Player_GetEntity(gp->u.display.xEE) == NULL ||
+-            Player_8003219C(gp->u.display.xEE) || !grStadium_801D32D0(gobj))
++            Player_8003219C(gp->u.display.xEE) || !melee_nx_ps_monitor_ok(gobj, gp->u.display.xEE))
+         {
+             grStadium_801D2A60(gobj);
+         }
+@@ -2038,6 +2061,12 @@ void grStadium_801D4548(Ground_GObj* gobj)
+     if (gm_8018841C() != 0) {
+         return;
+     }
++#ifdef __SWITCH__
++    /* Slippi online, IngameCheckIfFrozen: a frozen Stadium never transforms. */
++    if (melee_nx_online_codes() && melee_nx_online_frozen_stadium()) {
++        return;
++    }
++#endif
+ 
+     if (Stage_80225194() == 0xF0) {
+         temp_r3 = Ground_GetMapGObj(PsType_Display);
+@@ -2054,14 +2083,14 @@ void grStadium_801D4548(Ground_GObj* gobj)
+ 
+     switch (temp_r31->u.stadium.xDC) {
+     case 0:
+-        if (pc_is_frozen_stadium_enabled() && temp_r31->u.stadium.xDE == 5) {
++        if (melee_nx_pc_frozen_stadium() && temp_r31->u.stadium.xDE == 5) {
+             return;
+         }
+         temp_r3_4 = temp_r31->u.stadium.xD8;
+         temp_r31->u.stadium.xD8 = temp_r3_4 - 1;
+         if (temp_r3_4 < 0) {
+             if (temp_r31->u.stadium.xDE == 5) {
+-                if (pc_is_frozen_stadium_enabled()) {
++                if (melee_nx_pc_frozen_stadium()) {
+                     temp_r31->u.stadium.xD8 =
+                         randi_between_2(yakumono_param->x0, yakumono_param->x4);
+                     return;
+@@ -2099,6 +2128,13 @@ void grStadium_801D4548(Ground_GObj* gobj)
+             gp = GET_GROUND(map_gobj);
+             HSD_ASSERT(0x99B, gp);
+             gp->u.stadium.xC4_b1 = true;
++#ifdef __SWITCH__
++            if (melee_nx_online_codes()) { /* Slippi online, StadiumFileLoad: synchronous load */
++                gp->u.stadium.xC8 = lbFileGetSize(datfiles[var_r29]);
++                lbFile_8001668C(datfiles[var_r29], gp->u.stadium.xCC, &gp->u.stadium.xC8);
++                gp->u.stadium.xD0 = grDatFiles_801C6478(gp->u.stadium.xCC, gp->u.stadium.xC8);
++            } else
++#endif
+             lbFile_80016580(datfiles[var_r29], gp->u.stadium.xCC,
+                             &gp->u.stadium.xC8, fn_801D4220, NULL);
+             temp_r31->u.stadium.xDC = 1;
+@@ -2106,6 +2142,16 @@ void grStadium_801D4548(Ground_GObj* gobj)
+         }
+         break;
+     case 1:
++#ifdef __SWITCH__
++        if (melee_nx_online_codes()) { /* Slippi online, GrPsxIsValid: the archive is loaded */
++            UnkArchiveStruct* a = grDatFiles_801C6330(GET_GROUND(Ground_GetMapGObj(2))->map_id);
++            if (a != NULL && a->unk0 != NULL && *(u32*) a->unk0 != 0) {
++                temp_r31->u.stadium.xDC = 2;
++                return;
++            }
++            break;
++        }
++#endif
+         if (grStadium_801D42B8()) {
+             temp_r31->u.stadium.xDC = 2;
+             return;
+diff --git a/src/melee/lb/lb_0195.c b/src/melee/lb/lb_0195.c
+index cacafd9..c579a8e 100644
+--- a/src/melee/lb/lb_0195.c
++++ b/src/melee/lb/lb_0195.c
+@@ -1,4 +1,7 @@
+ #include "lb_0195.h"
++#ifdef __SWITCH__
++#include "slippi_game.h" /* melee-nx: Slippi online (switch/slippi/game) */
++#endif
+ 
+ #include "lb_0192.h"
+ #include "lbaudio_ax.h"
+@@ -51,9 +54,19 @@ void lb_800195D0(void)
+ 
+ void fn_800195FC(void)
+ {
++#ifdef __SWITCH__
++    /* Slippi online, PreventPadAlarmDuringRollback: the pad alarm waits out a rollback. */
++    if (melee_nx_online_pad_alarm_gate()) {
++        return;
++    }
++#endif
+     HSD_PadRenewRawStatus(0);
+     lb_8001C600();
+     lbSnap_8001D2BC();
++#ifdef __SWITCH__
++    /* Slippi online, ForceInputRefetchOnAdvance: catching up takes a second sample. */
++    melee_nx_online_after_pad_renew();
++#endif
+ }
+ 
+ void lb_80019628(void)
+diff --git a/src/melee/sfx/crowdsfx.c b/src/melee/sfx/crowdsfx.c
+index a29bdc7..9620c52 100644
+--- a/src/melee/sfx/crowdsfx.c
++++ b/src/melee/sfx/crowdsfx.c
+@@ -1,4 +1,7 @@
+ #include "crowdsfx.h"
++#ifdef __SWITCH__
++#include "slippi_game.h" /* melee-nx: Slippi online (switch/slippi/game) */
++#endif
+ 
+ #include <melee/mp/forward.h>
+ 
+@@ -187,7 +190,13 @@ void un_80321D30(u32 arg0, f32 arg1)
+     data = crowdsfx_ptr;
+     cat = un_80322298(arg1);
+     if (cat >= 2) {
++#ifdef __SWITCH__
++        /* Slippi online, PreventCharacterCrowdChants: the chant waits on the mixer, not on a
++         * frame, so both games could not agree on it. */
++        if (!melee_nx_online_active() && un_80321EBC(arg0, arg1) != 0) {
++#else
+         if (un_80321EBC(arg0, arg1) != 0) {
++#endif
+             un_80321CE8();
+             return;
+         }
+diff --git a/src/sysdolphin/baselib/axdriver.c b/src/sysdolphin/baselib/axdriver.c
+index 6d96fae..608cde6 100644
+--- a/src/sysdolphin/baselib/axdriver.c
++++ b/src/sysdolphin/baselib/axdriver.c
+@@ -1,4 +1,7 @@
+ #include <stdlib.h>
++#ifdef __SWITCH__
++#include "slippi_game.h" /* melee-nx: Slippi online (switch/slippi/game) */
++#endif
+ #include "axdriver.h"
+ 
+ #include <math.h>
+@@ -602,6 +605,15 @@ int AXDriver_8038CFF4(int sound_id, u8 volume, u8 pan, int track, int channel)
+     int bank_mem;
+     bool enabled;
+ 
++#ifdef __SWITCH__
++    /* Slippi online: a re-simulated frame starts no sounds, so a rollback does not play the
++     * frames it repeats a second time.
++     * shortcut: a sound whose start a rollback corrects is lost, and one a wrong prediction
++     * started keeps playing; port Melee Unlocked's mu_online_audio.c if that is audible. */
++    if (melee_nx_online_resim()) {
++        return -1;
++    }
++#endif
+     bank_idx = sound_id / 10000;
+     bank_mem = sound_id % 10000;
+ 
+diff --git a/src/sysdolphin/baselib/controller.c b/src/sysdolphin/baselib/controller.c
+index e058eba..d357193 100644
+--- a/src/sysdolphin/baselib/controller.c
++++ b/src/sysdolphin/baselib/controller.c
+@@ -1,4 +1,7 @@
+ #include "controller.h"
++#ifdef __SWITCH__
++#include "slippi_game.h" /* melee-nx: Slippi online (switch/slippi/game) */
++#endif
+ 
+ #include <math.h>
+ 
+@@ -62,7 +65,22 @@ void HSD_PadRenewRawStatus(bool err_check)
+     PADStatus now[4];
+ 
+     HSD_PadRumbleInterpret();
++#ifdef __SWITCH__
++    /* Slippi online, SkipNewInputFetchOnRollback: during a rollback the pads come from history,
++     * so the controllers are not read (and every port is rewritten below). */
++    if (melee_nx_online_skip_pad_read()) {
++        memset(now, 0, sizeof now);
++    } else {
++        PADRead(now);
++    }
++    /* Slippi online, TriggerSendInput: send this frame's pad, take the remote ones (or skip the
++     * sample while the two games wait for each other). */
++    if (melee_nx_online_pad_renew(now)) {
++        return;
++    }
++#else
+     PADRead(now);
++#endif
+     if (err_check) {
+         for (i = 0; i < 4; i++) {
+             if (!now[i].err) {

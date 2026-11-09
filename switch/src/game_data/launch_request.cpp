@@ -63,6 +63,10 @@ LaunchRequest ParseLaunchConfig(const std::string& text) {
             r.mods = value;
         } else if (key == "return") {
             r.returnTo = value;
+        } else if (key == "mode") {
+            r.mode = value;
+        } else if (key == "code") {
+            r.code = value;
         }
     }
     r.present = !r.disc.empty();

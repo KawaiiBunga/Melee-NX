@@ -57,7 +57,12 @@ new commit of already-patched files.
   launcher links devkitPro portlibs only (SDL2, SDL2_ttf, SDL2_image, libcurl, zlib).
 - `switch/slippi/slippi_protocol.*` ports Melee Unlocked's Slippi wire formats (same pin), and
   `switch/slippi/third_party/enet` is Melee Unlocked's vendored ENet (MIT, `LICENSE` kept) without
-  its YouGame socket backend; `native_socket_only.c` and one `unix.h` include are melee-nx's.
+  its YouGame socket backend; `native_socket_only.c`, the `unix.h` libnx block and the restored
+  public socket names in `win32.c` (host tests only) are melee-nx's. `switch/slippi/slippi_net.*`
+  ports its `NetplayClient` and `Matchmaking`, `switch/slippi/slippi_host.*` its Slippi command
+  handlers (`slippi_online.cpp`), and `switch/slippi/game/*` its game-side online code
+  (`mu_online.c`, the UCF and neutral-spawn code of `mu_gecko.c` and its `gmvs.c` patch). The
+  gameplay-code hunks in `melee-switch-slippi-hooks.patch` follow its `melee-native.patch`.
 - `ref/melee-unlocked` is a reference checkout for the Slippi port, not a build dependency; see
   [SLIPPI.md](SLIPPI.md).
 

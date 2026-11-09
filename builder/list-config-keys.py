@@ -36,6 +36,9 @@ DESCRIPTIONS = {
     'prof_hz': 'samples per second per thread, at most 4000 (sampling profiler, PERFORMANCE.md)',
     'prof_seconds': 'seconds to record; 0 never starts the profiler (sampling profiler)',
     'prof_start': 'seconds after launch before recording starts (sampling profiler)',
+    'rollback_selftest': 'frames between rollback determinism self-tests; 0 off (docs/SLIPPI.md)',
+    'rollback_selftest_depth': 'frames each rollback self-test re-simulates, 1-30 (docs/SLIPPI.md)',
+    'slippi_delay': 'online input delay in frames, 1-9 (docs/SLIPPI.md)',
     'texture_cmpr_bc1': '1 keeps CMPR textures compressed as BC1, an eighth of the RGBA8 bytes (deko3d renderer)',
 }
 SKIP_DIRS = {'uam', 'build', 'ref'}

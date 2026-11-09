@@ -12,6 +12,7 @@
 #include "screens/home.h"
 #include "screens/screen.h"
 #include "ui/fonts.h"
+#include "ui/keyboard.h"
 
 #ifdef MNX_PREVIEW
 bool PreviewFrame(SDL_Renderer* renderer);
@@ -126,6 +127,35 @@ void App::LaunchGame() {
                             {{"OK", nullptr, true}}});
         return;
     }
+    const bool slippi = settings_.mode == 1;
+    if (slippi && slippi_.state != mnx::slippi::State::Valid) {
+        overlay_.ShowModal({"Sign in first", "Slippi mode needs your Slippi account.", {{"OK", nullptr, true}}});
+        return;
+    }
+    if (slippi) {
+        // The game has no Slippi menus of its own, so who to play is chosen here.
+        overlay_.ShowModal({"Slippi",
+                            "Unranked finds an opponent.\nDirect plays a connect code.",
+                            {{"Unranked", [this] { StartGame(true, ""); }, true},
+                             {"Direct",
+                              [this] {
+                                  std::string code;
+                                  if (!ui::PromptText("Opponent's connect code (ABCD#123)", settings_.opponentCode, 12, code)) return;
+                                  if (!mnx::launch::NormalizeConnectCode(code)) {
+                                      overlay_.ShowModal({"Not a connect code", "It looks like ABCD#123.", {{"OK", nullptr, true}}});
+                                      return;
+                                  }
+                                  settings_.opponentCode = code;
+                                  mnx::SaveSettings(settings_);
+                                  StartGame(true, code);
+                              }},
+                             {"Cancel", nullptr}}});
+        return;
+    }
+    StartGame(false, "");
+}
+
+void App::StartGame(bool slippi, const std::string& code) {
     std::string error;
     const bool useMods = settings_.modsEnabled && mods_.EnabledCount() > 0;
     if (!mods_.WriteManifest(mnx::paths::kModsManifest, useMods, &error)) {
@@ -136,6 +166,8 @@ void App::LaunchGame() {
     req.bootArg = game_.BootArg();
     req.modsManifest = useMods ? mnx::paths::kModsManifest : "";
     req.returnTo = settings_.returnToLauncher ? mnx::launch::SelfPath() : "";
+    req.mode = slippi ? "slippi" : "vanilla";
+    req.code = code;
     if (!mnx::launch::Start(mnx::launch::FindGameNro(), req, error)) {
         overlay_.ShowModal({"Could not start the game", error, {{"OK", nullptr, true}}});
         return;

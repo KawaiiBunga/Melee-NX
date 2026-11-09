@@ -15,6 +15,8 @@ struct LaunchRequest {
     std::string disc;      // disc image path or kLooseBootSentinel
     std::string mods;      // mod overlay manifest, or empty for none
     std::string returnTo;  // launcher NRO to reopen on exit, or empty
+    std::string mode;      // "slippi" or "vanilla" (empty: vanilla)
+    std::string code;      // Slippi: the opponent's connect code (Direct mode)
 };
 
 bool HasLaunchFlag(int argc, char** argv);

@@ -9,7 +9,7 @@ startup. Without the file every key has its default.
   `opt_safe 1` turns every opt off except those the file sets explicitly.
 - **setting**: a plain value.
 
-13 keys.
+16 keys.
 
 | Key | Kind | Default | Values | Read in |
 |---|---|---|---|---|
@@ -23,6 +23,9 @@ startup. Without the file every key has its default.
 | `prof_hz` | setting | `750` | samples per second per thread, at most 4000 (sampling profiler, PERFORMANCE.md) | `switch/src/prof_switch.cpp:197` |
 | `prof_seconds` | setting | `0` | seconds to record; 0 never starts the profiler (sampling profiler) | `switch/src/prof_switch.cpp:192` |
 | `prof_start` | setting | `60` | seconds after launch before recording starts (sampling profiler) | `switch/src/prof_switch.cpp:196` |
+| `rollback_selftest` | setting | `0` | frames between rollback determinism self-tests; 0 off (docs/SLIPPI.md) | `switch/src/rollback_switch.cpp:331` |
+| `rollback_selftest_depth` | setting | `7` | frames each rollback self-test re-simulates, 1-30 (docs/SLIPPI.md) | `switch/src/rollback_switch.cpp:332` |
+| `slippi_delay` | setting | `2` | online input delay in frames, 1-9 (docs/SLIPPI.md) | `switch/slippi/slippi_host.cpp:240` |
 | `texture_cmpr_bc1` | setting | `0` | 1 keeps CMPR textures compressed as BC1, an eighth of the RGBA8 bytes (deko3d renderer) | `builder/integrate-deko.py:343` |
 | `uber` | setting | `0` | 0 off, 1 hybrid, 2 always; measured too slow on the GPU (NVK renderer) | `switch/src/perf_switch.cpp` |
 | `warm_helpers` | setting | `0` | 0-2 extra warm-up compilers (NVK renderer) | `switch/src/perf_switch.cpp` |

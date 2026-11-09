@@ -126,16 +126,35 @@ void HomeScreen::Draw(app::App& app, ui::Canvas& c) {
 void HomeScreen::BuildPlay(app::App& app) {
     const bool ready = app.game().CanPlay();
     const int mods = app.settings().modsEnabled ? app.mods().EnabledCount() : 0;
-    Add<Card>(Rect{kContentX, kBodyY, kContentW, 300}, [ready, mods](ui::Canvas& c, const ui::Theme& th, const Rect& r) {
-        c.FillGradientRoundRect({r.x, r.y, r.w, 170}, 18, ui::Mix(th.accent, th.panel, 0.6f), th.panel);
-        c.Text(ui::kLabel, "SUPER SMASH BROS.", r.x + 36, r.y + 40, th.text);
-        c.Text(ui::kDisplayXL, "Melee", r.x + 32, r.y + 62, th.text);
-        c.FillCircle({r.x + 44, r.y + 236}, 7, ready ? th.good : th.warn);
-        const std::string state = !ready ? "Add your disc in Game Files"
-                                         : mods ? "Ready  ·  " + std::to_string(mods) + (mods == 1 ? " mod" : " mods")
-                                                : "Ready";
-        c.Text(ui::kBodyStrong, state, r.x + 62, r.y + 236, th.text, Align::Left, VAlign::Middle);
-    });
+    const bool signedIn = app.slippi().state == mnx::slippi::State::Valid;
+    // Two modes, picked like KartPadNX's game cards: Play starts the selected one.
+    const float cardW = (kContentW - 20) * 0.5f;
+    struct ModeCard {
+        int mode;
+        const char* title;
+        std::string subtitle;
+    };
+    const ModeCard cards[] = {
+        {0, "Vanilla", !ready ? "Add your disc in Game Files"
+                              : mods ? std::to_string(mods) + (mods == 1 ? " mod on" : " mods on") : "Ready"},
+        {1, "Slippi", signedIn ? app.slippi().account.connectCode : "Sign in on the Slippi page"},
+    };
+    for (int i = 0; i < 2; ++i) {
+        const ModeCard m = cards[i];
+        auto* box = Add<ui::ItemBox>(Rect{kContentX + i * (cardW + 20), kBodyY + 10, cardW, 290}, m.title, m.subtitle);
+        box->SetSelected(app.settings().mode == m.mode);
+        if (app.settings().mode == m.mode) box->SetBadge("Selected", app.theme().accent);
+        box->OnActivate([this, &app, m]() {
+            if (app.settings().mode == m.mode) {
+                app.LaunchGame();
+                return;
+            }
+            app.settings().mode = m.mode;
+            app.SaveSettings();
+            Later([this, &app]() { Build(app); });
+        });
+        Track(box);
+    }
     auto* toggle = Add<ui::ToggleRow>(Rect{kContentX, kBodyY + 320, kContentW, kRowH}, "Load mods", &app.settings().modsEnabled, [this, &app](bool) {
                                           app.SaveSettings();
                                           Later([this, &app]() { Build(app); });

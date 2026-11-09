@@ -318,12 +318,16 @@ extern "C" int main(int argc, char** argv) {
         if (!launch.mods.empty()) {
             setenv("MELEE_MODS_MANIFEST", launch.mods.c_str(), 1);
         }
+        // Vanilla or Slippi, as chosen on the launcher's Play page (docs/LAUNCHER.md).
+        setenv("MELEE_NX_MODE", launch.mode == "slippi" ? "slippi" : "vanilla", 1);
+        setenv("MELEE_NX_SLIPPI_CODE", launch.code.c_str(), 1);
     }
     if (discPath.empty()) {
         discPath = melee_nx::EnsureGameDataAvailable(nro_directory(argc, argv));
     }
-    melee_boot_trace("05 gate          disc=%s launcher=%d mods=%s", discPath.empty() ? "<none>" : discPath.c_str(),
-                     launch.present ? 1 : 0, launch.mods.empty() ? "<none>" : launch.mods.c_str());
+    melee_boot_trace("05 gate          disc=%s launcher=%d mods=%s mode=%s", discPath.empty() ? "<none>" : discPath.c_str(),
+                     launch.present ? 1 : 0, launch.mods.empty() ? "<none>" : launch.mods.c_str(),
+                     launch.mode.empty() ? "vanilla" : launch.mode.c_str());
 
     // Keep the console alive to report a failed log redirect.
     if (!redirect_stdio_to_sd()) {

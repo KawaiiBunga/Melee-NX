@@ -42,7 +42,26 @@ std::string FindGameNro() {
 
 std::string FormatConfig(const Request& r) {
     return "# Written by the Melee NX launcher; read by melee.nro --launch\n"
-           "disc=" + r.bootArg + "\nmods=" + r.modsManifest + "\nreturn=" + r.returnTo + "\n";
+           "disc=" + r.bootArg + "\nmods=" + r.modsManifest + "\nreturn=" + r.returnTo + "\nmode=" + r.mode +
+           "\ncode=" + r.code + "\n";
+}
+
+bool NormalizeConnectCode(std::string& code) {
+    std::string out;
+    size_t hash = std::string::npos;
+    for (char c : code) {
+        if (c == ' ') continue;
+        if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+        const bool digit = c >= '0' && c <= '9', letter = c >= 'A' && c <= 'Z';
+        if (c == '#' && hash == std::string::npos) hash = out.size();
+        else if (!(digit || (letter && hash == std::string::npos))) return false;
+        out += c;
+    }
+    if (hash == std::string::npos || hash < 1 || hash > 8) return false;
+    const size_t digits = out.size() - hash - 1;
+    if (digits < 1 || digits > 3) return false;
+    code = out;
+    return true;
 }
 
 bool Start(const std::string& gameNro, const Request& r, std::string& error) {
@@ -54,7 +73,7 @@ bool Start(const std::string& gameNro, const Request& r, std::string& error) {
         error = "No game data yet. Set it up in Game Files.";
         return false;
     }
-    if (!Clean(r.bootArg) || !Clean(r.modsManifest) || !Clean(r.returnTo)) {
+    if (!Clean(r.bootArg) || !Clean(r.modsManifest) || !Clean(r.returnTo) || !Clean(r.code)) {
         error = "A path contains a line break.";
         return false;
     }

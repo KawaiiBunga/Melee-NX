@@ -48,6 +48,8 @@ do_patch() {
     apply_patch_once "$melee_pc" "$repo/switch/patches/melee-switch-disc-ptr-window.patch"
     apply_patch_once "$melee_pc" "$repo/switch/patches/melee-switch-input-worker.patch"
     apply_patch_once "$melee_pc" "$repo/switch/patches/melee-switch-perf-telemetry.patch"
+    apply_patch_once "$melee_pc" "$repo/switch/patches/melee-switch-rollback-hooks.patch"
+    apply_patch_once "$melee_pc" "$repo/switch/patches/melee-switch-slippi-hooks.patch"
   else
     echo "WARNING: melee-switch-gcc-compat.patch not yet created — skipping patch step."
     echo "         This patch removes -no-pie/-Ttext-segment and adds Switch path overrides."
