@@ -1,6 +1,7 @@
 // Switch startup, game-data selection, and handoff to melee_main_impl().
 
 #include "game_data/game_data_gate.h"
+#include "game_data/launch_request.h"
 #include "perf_switch.h"
 #include "log_switch.h"
 
@@ -21,6 +22,7 @@
 #include <unistd.h>
 
 extern "C" int melee_main_impl(int argc, char** argv);
+extern "C" void melee_nx_ensure_controller(void); // input_switch.cpp
 
 #ifndef MELEE_NX_ROOT_REV
 #define MELEE_NX_ROOT_REV "unknown"
@@ -273,6 +275,20 @@ void log_build_manifest() {
                                                  : "default");
 }
 
+// Launcher NRO to reopen when the game exits (launch.cfg "return="). Set at exit, through atexit,
+// so quitting from inside the game (exit()) returns to the launcher as well as a normal return.
+std::string g_returnTo;
+
+void return_to_launcher() {
+    if (g_returnTo.empty() || g_returnTo.size() >= 512 || !envHasNextLoad()) {
+        return;
+    }
+    if (access(g_returnTo.c_str(), F_OK) != 0) {
+        return;
+    }
+    envSetNextLoad(g_returnTo.c_str(), g_returnTo.c_str());
+}
+
 } // namespace
 
 extern "C" int main(int argc, char** argv) {
@@ -287,8 +303,27 @@ extern "C" int main(int argc, char** argv) {
     // Release the extraction console before Aurora takes over the framebuffer.
     consoleInit(nullptr);
     melee_boot_trace("04 consoleInit");
-    std::string discPath = melee_nx::EnsureGameDataAvailable(nro_directory(argc, argv));
-    melee_boot_trace("05 gate          disc=%s", discPath.empty() ? "<none>" : discPath.c_str());
+    // Started by the Melee NX launcher: it already chose the game data and the mods.
+    const melee_nx::LaunchRequest launch = melee_nx::ReadLaunchRequest(argc, argv);
+    std::string discPath;
+    if (launch.present) {
+        g_returnTo = launch.returnTo;
+        std::atexit(return_to_launcher);
+        std::string reason;
+        if (melee_nx::ValidateLaunchDisc(launch.disc, reason)) {
+            discPath = launch.disc;
+        } else {
+            melee_boot_trace("05 launch.cfg    rejected disc (%s); using the gate", reason.c_str());
+        }
+        if (!launch.mods.empty()) {
+            setenv("MELEE_MODS_MANIFEST", launch.mods.c_str(), 1);
+        }
+    }
+    if (discPath.empty()) {
+        discPath = melee_nx::EnsureGameDataAvailable(nro_directory(argc, argv));
+    }
+    melee_boot_trace("05 gate          disc=%s launcher=%d mods=%s", discPath.empty() ? "<none>" : discPath.c_str(),
+                     launch.present ? 1 : 0, launch.mods.empty() ? "<none>" : launch.mods.c_str());
 
     // Keep the console alive to report a failed log redirect.
     if (!redirect_stdio_to_sd()) {
@@ -321,8 +356,10 @@ extern "C" int main(int argc, char** argv) {
     log_build_manifest();
     melee_nx_log_init();
     melee_nx_perf_init();
+    melee_nx_prof_init();
     melee_boot_trace("08 cache-budget  MELEE_CACHE_MAX_MB=%s",
                      getenv("MELEE_CACHE_MAX_MB") ? getenv("MELEE_CACHE_MAX_MB") : "<unset>");
+    melee_nx_ensure_controller();
 
     // Pass the selected disc path or loose-boot sentinel to the upstream entry point.
     char progName[] = "melee";

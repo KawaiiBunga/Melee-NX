@@ -9,8 +9,10 @@ jobs="${MELEE_BUILD_JOBS:-4}"
 case "$stage" in patch|configure|build|all) ;;
   *) echo "usage: $0 [patch|configure|build|all]" >&2; exit 64;; esac
 
+# The game draws with the native deko3d renderer in switch/deko (docs/DEKO3D.md);
+# builder/build-graphics.sh builds its Dawn first.
 melee_pc="$repo/ref/melee-pc"
-build_dir="$repo/build/switch"
+build_dir="$repo/build/switch-deko"
 
 # Must match build-graphics.sh: each SDL variant has its own source and build
 # root, and the library has to be linked against the headers it was built from.
@@ -54,21 +56,22 @@ do_patch() {
 }
 
 do_configure() {
-  require_file "$repo/build/dawn-switch/src/dawn/native/libwebgpu_dawn.a"
   require_file "$sdl_build/libSDL3.a"
-  # The Docker wrapper supplies Mesa at /mesa-nvk; direct invocations may override it.
-  : "${MESA_NVK_ROOT:=/mesa-nvk}"
+  local linker_flags="-Wl,--wrap=pthread_create -Wl,--wrap=exit -Wl,--wrap=abort -Wl,--wrap=_exit -Wl,--wrap=__cxa_throw -Wl,--wrap=pthread_detach -Wl,--wrap=pthread_join"
+  require_file "$repo/build/dawn-switch-deko/src/dawn/native/libwebgpu_dawn.a"
+  # Aurora with the deko3d seams, staged beside the reference tree (never edited in place).
+  python3 "$repo/builder/integrate-deko.py" --dst "$repo/build/aurora-deko"
   cmake -S "$repo/switch" -B "$build_dir" -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE="$repo/switch/cmake/SwitchGCC.cmake" \
     -DCMAKE_BUILD_TYPE=Release \
-    "-DCMAKE_EXE_LINKER_FLAGS=-Wl,--wrap=pthread_create -Wl,--wrap=exit -Wl,--wrap=abort -Wl,--wrap=_exit -Wl,--wrap=__cxa_throw -Wl,--wrap=pthread_detach -Wl,--wrap=pthread_join" \
+    "-DCMAKE_EXE_LINKER_FLAGS=$linker_flags" \
     -DMELEE_DAWN_SOURCE="$repo/ref/dawn" \
-    -DMELEE_DAWN_BUILD="$repo/build/dawn-switch" \
+    -DMELEE_DAWN_BUILD="$repo/build/dawn-switch-deko" \
+    -DMELEE_AURORA_SOURCE="$repo/build/aurora-deko" \
     -DMELEE_SDL_SOURCE="$sdl_source" \
     -DMELEE_SDL_BUILD="$sdl_build" \
-    -DMESA_NVK_ROOT="$MESA_NVK_ROOT"
+    ${MELEE_NX_CMAKE_ARGS:-}
 }
-
 do_build() {
   cmake --build "$build_dir" --parallel "$jobs"
 }
@@ -79,4 +82,4 @@ case "$stage" in
   build)     do_build ;;
   all)       do_patch; do_configure; do_build ;;
 esac
-echo "build-melee.sh [$stage] done (SDL variant: $sdl_variant)."
+echo "build-melee.sh [$stage] done (graphics: $gfx, SDL variant: $sdl_variant, build dir: ${build_dir#"$repo"/})."

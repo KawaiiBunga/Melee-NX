@@ -4,12 +4,24 @@ melee-nx compiles the melee-pc game sources directly to AArch64 and supplies
 Switch platform adapters. Rendering follows:
 
 ```text
-Game C → Aurora GX → Dawn WebGPU → Vulkan → Mesa NVK → libnx NWindow
+Game C → Aurora GX → Dawn WebGPU (Null backend) → switch/deko → deko3d → libnx NWindow
 ```
+
+Tint translates Aurora's WGSL to GLSL, `switch/uam` compiles it to deko3d shaders at run time, and
+`switch/deko/` draws; [DEKO3D.md](DEKO3D.md) describes the seams. The launcher (`launcher/`) is a
+separate NRO that starts the game (see [LAUNCHER.md](LAUNCHER.md)).
 
 Upstream source changes live in patches. The owned code in `switch/src/`
 provides process startup, threading and libc compatibility, disc access,
 logging, telemetry, and the SQLite VFS.
+
+`malloc` is routed to newlib's `_malloc_r` (`src/malloc_switch.c`, option `MELEE_NX_MALLOC_WRAP`).
+devkitA64's `malloc` sends every request over 31 bytes through `_memalign_r(32, n)`, which asks for
+`n + 64` and frees the misaligned head and the cut-off tail. That leaves a small free chunk beside every
+block, so the free lists grow over a session and every allocation walks longer bins under newlib's one
+heap lock. KartPadNX measured allocator code rising from 4% to 47% of Dawn's frame worker over ten
+races. Blocks are 16-byte aligned (`alignof(max_align_t)`); aligned `new` and `memalign` still use
+`_memalign_r`. Not yet measured on this port.
 
 ## Compiler and linker constraints
 
@@ -27,7 +39,7 @@ Link order is significant:
 
 1. `crti.o` and `crtbegin.o` precede application objects.
 2. Application and graphics libraries precede the runtime group.
-3. C/C++ runtime and Mesa libraries share a rescan group for cyclic references.
+3. C/C++ runtime libraries share a rescan group for cyclic references.
 4. `crtend.o` and `crtn.o` close the startup sections at the end of the link.
 
 The runtime group is set through `CMAKE_CXX_STANDARD_LIBRARIES` after
@@ -109,9 +121,8 @@ and cache correctness; formatting work must preserve them.
 
 Dawn and SDL are built separately and imported into the game build. Each SDL
 variant has a separate source/build pair. Aurora is built from melee-pc's
-vendored tree. Mesa supplies the existing archive set and its Rust/newlib ABI
-bridge, either through a read-only host mount or a packaged SDK.
+vendored tree, staged with the deko3d seams by `builder/integrate-deko.py`.
+No GPU driver is linked: deko3d talks to the GPU through libnx.
 
 The [dependency guide](DEPS.md) records pins and provenance. The
-[Docker guide](../switch/docker/README.md) describes the portable SDK; packaging
-does not change compilers, rebuild driver code, or alter linker options.
+[Docker guide](../switch/docker/README.md) describes the toolchain image.

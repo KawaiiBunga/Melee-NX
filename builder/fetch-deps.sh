@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Fetch pinned upstream sources into ref/. Existing trees are left unchanged.
 # Usage: bash builder/fetch-deps.sh [all|melee-pc|dawn|sdl|sdl-legacy|sdl-dusklight]
-# Mesa is supplied separately through the SDK or MESA_NVK_ROOT; see BUILDING.md.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/.." && pwd)"
@@ -84,14 +83,8 @@ cat <<'MSG'
 
 Reference trees ready under ref/.
 
-Still required before building: a built Mesa/NVK Switch tree, exported as
-MESA_NVK_ROOT. Switch ships no vendor Vulkan driver for homebrew and devkitPro's
-switch-mesa package is EGL/GLES-only, so this is not optional and not something
-this script can shortcut. See BUILDING.md, section "Mesa/NVK".
-
 Next:
   bash builder/docker.sh image
   bash builder/docker.sh graphics all
-  bash builder/docker.sh melee configure
-  bash builder/docker.sh melee build
+  bash builder/docker.sh melee all
 MSG

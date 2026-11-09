@@ -8,6 +8,8 @@ Start with [BUILDING.md](BUILDING.md) for a working environment and
 | Change | Location |
 |---|---|
 | Switch-owned runtime code | `switch/src/` |
+| The launcher NRO (UI, mods, Slippi account, game handoff) | `launcher/`; see [docs/LAUNCHER.md](docs/LAUNCHER.md) |
+| Slippi protocol and network code | `switch/slippi/`; see [docs/SLIPPI.md](docs/SLIPPI.md) |
 | Compiler, linker, graphics configuration | `switch/CMakeLists.txt`, `switch/cmake/` |
 | Upstream Melee, Aurora, Dawn, or SDL changes | Working source in `ref/`, captured in `switch/patches/` |
 | Dependency and build tooling | `builder/`, `switch/docker/` |
@@ -35,7 +37,7 @@ bash builder/test-patch-common.sh
 
 The verifier checks clean reconstruction, live reverse application, ownership,
 and byte equality for Melee/Aurora and SDL. It does not reset the live trees or
-validate the separate Dawn/Mesa build. `patch-common.sh` runs Git from the
+validate the separate Dawn build. `patch-common.sh` runs Git from the
 actual repository root so nested Aurora paths cannot be silently skipped.
 
 Never edit `builder/*.sh` while a container is executing one of those scripts.
@@ -47,10 +49,29 @@ SDK packaging uses the image's Python 3.11+ and GNU `ar`.
 
 ```bash
 python builder/test-perf-report.py
+python builder/test-prof-report.py
+python builder/test-deko-training.py
+python builder/list-config-keys.py --check
 python builder/verify-patches.py
 bash builder/test-patch-common.sh
 bash -n builder/docker.sh
 ```
+
+The launcher and the Slippi protocol have host tests (Windows, llvm-mingw clang); the launcher also
+builds natively with a local devkitPro:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File launcher\tests\run-host-tests.ps1
+powershell -ExecutionPolicy Bypass -File switch\slippi\tests\run-tests.ps1
+powershell -ExecutionPolicy Bypass -File launcher\build-native.ps1
+```
+
+A change to the launch handoff (`launcher/source/data/launch.cpp`,
+`switch/src/game_data/launch_request.cpp`) or the mod manifest format must keep both sides and the
+round-trip test in `launcher_tests.cpp` in step.
+
+`list-config-keys.py --write` regenerates [docs/PERF-CFG-KEYS.md](docs/PERF-CFG-KEYS.md) after you add or
+change a perf.cfg key (`melee_nx_opt` / `melee_nx_perf_int`).
 
 The Docker wrapper and SDK tests use Bash and `ar`. Run them inside the selected
 toolchain or SDK image:

@@ -45,15 +45,21 @@ desktop.ini
 .vscode/
 .idea/
 
-# Public documentation is allowlisted; local handoffs remain private.
+# Public documentation is allowlisted; gatekeep the other shit bc I'm lowkey evil
 /docs/*
 !/docs/README.md
 !/docs/DEPS.md
 !/docs/ARCHITECTURE.md
 !/docs/CLEANUP.md
+!/docs/SLIPPI.md
+!/docs/LAUNCHER.md
+!/docs/DEKO3D.md
+!/docs/PERF-CFG-KEYS.md
 /memory/
 .claude/
 /AGENTS.md
 /CLAUDE.md
 /PROGRESS.md
 /PERFORMANCE.md
+.agents/
+.codex/

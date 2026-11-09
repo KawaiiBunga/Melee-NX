@@ -8,6 +8,15 @@ extern "C" {
 /* Loaded once before Aurora starts its workers. Missing file selects baseline. */
 void melee_nx_perf_init(void);
 void melee_nx_perf_thread(const char* name);
+/* A numeric perf.cfg value (decimal or 0x hex), or `fallback` when the key is absent. */
+int melee_nx_perf_int(const char* key, int fallback);
+/* Like melee_nx_perf_int for an optimization switch: `opt_safe 1` turns it off unless the file sets
+   it, and the first call per key logs "[opt] key=value (source)". */
+int melee_nx_opt(const char* key, int fallback);
+/* Sampling profiler (prof_switch.cpp, perf.cfg prof_seconds). Roles: 0 game, 1 FIFO, 2 render,
+   3 shader compile. Register from the thread itself once it is placed. */
+void melee_nx_prof_init(void);
+void melee_nx_prof_register(int role);
 uint64_t melee_nx_perf_now(void);
 enum MeleePerfStage {
     MELEE_PERF_FIFO,

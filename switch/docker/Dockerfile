@@ -1,5 +1,5 @@
 # Reusable Switch toolchain. GCC handles scalar_storage_order; Clang builds Dawn.
-# See README.md for toolchain and Mesa SDK image usage.
+# See README.md.
 
 FROM devkitpro/devkita64:latest
 

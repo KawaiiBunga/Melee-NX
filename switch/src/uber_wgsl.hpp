@@ -116,7 +116,12 @@ var<uniform> ubuf: UberUniform;
 
 fn uf(i: u32) -> vec4f { return ubuf.f[i]; }
 fn mat3x4_at(i: u32) -> mat3x4f { return mat3x4f(ubuf.f[i], ubuf.f[i + 1u], ubuf.f[i + 2u]); }
-fn uw(vi: u32, c: u32) -> u32 { return ubuf.u[vi][c]; }
+// A uniform vector's component by a runtime index, through constant swizzles: uam (deko3d) reads .x for
+// `v[i]` on a uniform or immediate vector.
+fn pick4u(v: vec4u, i: u32) -> u32 {
+    return select(select(select(v.x, v.y, i == 1u), v.z, i == 2u), v.w, i == 3u);
+}
+fn uw(vi: u32, c: u32) -> u32 { return pick4u(ubuf.u[vi], c); }
 
 // ---- Vertex attribute access ----------------------------------------------
 
@@ -133,8 +138,8 @@ struct Attr {
 fn attr_desc(a: u32) -> Attr {
     let k0 = a * 2u;
     let k1 = k0 + 1u;
-    let w0 = ubuf.u[U_ATTRS + (k0 >> 2u)][k0 & 3u];
-    let w1 = ubuf.u[U_ATTRS + (k1 >> 2u)][k1 & 3u];
+    let w0 = pick4u(ubuf.u[U_ATTRS + (k0 >> 2u)], k0 & 3u);
+    let w1 = pick4u(ubuf.u[U_ATTRS + (k1 >> 2u)], k1 & 3u);
     var d: Attr;
     d.atype = w0 & 0xFFu;
     d.cnt = (w0 >> 8u) & 0xFFu;
@@ -148,9 +153,9 @@ fn attr_desc(a: u32) -> Attr {
 
 fn array_start(a: u32) -> u32 {
     let g = a - GX_VA_POS;
-    if (g < 4u) { return imm.array_start0[g]; }
-    if (g < 8u) { return imm.array_start1[g - 4u]; }
-    return imm.array_start2[g - 8u];
+    if (g < 4u) { return pick4u(imm.array_start0, g); }
+    if (g < 8u) { return pick4u(imm.array_start1, g - 4u); }
+    return pick4u(imm.array_start2, g - 8u);
 }
 
 struct AttrLoc {
@@ -269,7 +274,7 @@ fn load_byte_attr(a: u32, vidx: u32) -> u32 {
 // keeps rgb or .a. `clr` is the vertex color feeding the channel.
 fn light_channel(c: u32, alpha: bool, mv_pos: vec3f, mv_nrm: vec3f, clr: vec4f) -> vec4f {
     let cfg_index = select(c, c + 2u, alpha);
-    let cfg = ubuf.u[U_CHAN][cfg_index];
+    let cfg = pick4u(ubuf.u[U_CHAN], cfg_index);
     let mat_vtx = (cfg & 1u) != 0u;
     let amb_vtx = ((cfg >> 1u) & 1u) != 0u;
     let diff_fn = (cfg >> 2u) & 3u;
@@ -278,7 +283,7 @@ fn light_channel(c: u32, alpha: bool, mv_pos: vec3f, mv_nrm: vec3f, clr: vec4f) 
     let matc = select(uf(F_CC + c * 4u + select(1u, 3u, alpha)), clr, mat_vtx);
     if (!lit) { return matc; }
     var lighting = select(uf(F_CC + c * 4u + select(0u, 2u, alpha)), clr, amb_vtx);
-    let mask = ubuf.u[U_LIGHTMASK][cfg_index];
+    let mask = pick4u(ubuf.u[U_LIGHTMASK], cfg_index);
     for (var i = 0u; i < 8u; i++) {
         if ((mask & (1u << i)) == 0u) { continue; }
         let lb = F_LIGHTS + i * 5u;
@@ -736,8 +741,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
 
         var st: StageIn;
         st.has_tex = tex_map != 15u;
-        st.swap_tex = ubuf.u[U_SWAP][swap_tex];
-        st.swap_ras = ubuf.u[U_SWAP][swap_ras];
+        st.swap_tex = pick4u(ubuf.u[U_SWAP], swap_tex);
+        st.swap_ras = pick4u(ubuf.u[U_SWAP], swap_ras);
         st.ksel = ksel;
         st.asel = asel;
         st.has_rast = channel != CH_ZERO && channel != 15u;
@@ -852,6 +857,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
     text += "\n";
     text += replace_all(replace_all(std::string(body), "@F_COUNT@", std::to_string(F_COUNT)), "@U_COUNT@",
                         std::to_string(U_COUNT));
+#if defined(AURORA_GFX_DEKO3D)
+    // Tint's GLSL writer cannot lower textureNumLevels here; deko3d always takes the bias sample, as
+    // shader.cpp's specialised shaders do (legacyTexLod).
+    for (int i = 0; i < 8; ++i)
+        text = replace_all(text, "textureNumLevels(tex" + std::to_string(i) + ") == 1u", "false");
+#endif
     return text;
 }
 

@@ -10,15 +10,19 @@ if(NOT CMAKE_C_COMPILER_ID STREQUAL "GNU")
   message(FATAL_ERROR "melee-nx requires GCC as the C compiler (same as melee-pc upstream). Use SwitchGCC.cmake.")
 endif()
 
-# Graphics dependencies must be included before forming the NVK link group.
+# malloc straight to newlib's _malloc_r. devkitA64's malloc aligns every block over 31 bytes to 32
+# through _memalign_r, which leaves a free chunk behind each allocation (src/malloc_switch.c).
+option(MELEE_NX_MALLOC_WRAP "Route malloc to newlib's _malloc_r" ON)
+
+# Graphics dependencies must be included before forming the link group.
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/Graphics.cmake")
 
 # Set this after project(), which overwrites the toolchain value. The group
-# resolves cyclic runtime and NVK archives after all application libraries.
+# resolves cyclic runtime and graphics archives after all application libraries.
 # crtend/crtn must be last to close the startup sections opened by crti/crtbegin.
 # See docs/ARCHITECTURE.md for the compiler and link-order constraints.
 set(CMAKE_CXX_STANDARD_LIBRARIES
-  "-Wl,--start-group -lstdc++ -lsupc++ -lpthread -lsysbase -lc -lm -lgcc -lunwind -lnx ${MELEE_NVK_ARCHIVES} -ljpeg -lexpat -Wl,--end-group ${MELEE_LIBGCC_DIR}/crtend.o ${MELEE_LIBGCC_DIR}/crtn.o"
+  "-Wl,--start-group -lstdc++ -lsupc++ -lpthread -lsysbase -lc -lm -lgcc -lunwind -lnx ${MELEE_GFX_LINK_LIBS} -ljpeg -lexpat -Wl,--end-group ${MELEE_LIBGCC_DIR}/crtend.o ${MELEE_LIBGCC_DIR}/crtn.o"
   CACHE STRING "" FORCE)
 
 # Game sources
@@ -104,11 +108,27 @@ target_compile_definitions(melee PRIVATE
   MELEE_NX_ROOT_REV="${MELEE_NX_ROOT_REV}"
   MELEE_NX_MELEE_PC_REV="${MELEE_NX_MELEE_PC_REV}"
   MELEE_NX_PATCHSET_ID="${MELEE_NX_PATCHSET_ID}"
-  MELEE_APP_VERSION="v0.2.5")
+  MELEE_APP_VERSION="v0.5.0")
 target_include_directories(melee PRIVATE "${CMAKE_CURRENT_LIST_DIR}/src/game_data")
 target_link_libraries(melee PRIVATE melee_game aurora::main ${MELEE_CRYPTO_LIBS} ${MELEE_NETWORK_LIBS})
-# Bridge the Rust archive ABI to newlib.
-target_sources(melee PRIVATE "${MELEE_NVK_STUBS_SOURCE}")
+if(MELEE_NX_MALLOC_WRAP)
+  target_link_options(melee PRIVATE "LINKER:--wrap=malloc")
+endif()
+# Host services of the native renderer, and the diagnostics that keep the NVIDIA result of a failed
+# GPU submission. Every wgpu entry point in wrap-symbols.txt is replaced at link time (see
+# switch/deko/backend_internal.h); the originals stay reachable as __real_<name>.
+target_sources(melee PRIVATE
+  "${CMAKE_CURRENT_LIST_DIR}/deko/host/deko_host_switch.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/deko/host/gpu_submit_diagnostics.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/deko/host/posix_stubs_switch.c")
+target_include_directories(melee PRIVATE "${CMAKE_CURRENT_LIST_DIR}/src")
+target_link_options(melee PRIVATE
+  "LINKER:--wrap=nvGpuChannelAppendEntry" "LINKER:--wrap=nvGpuChannelKickoff")
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/deko/wrap-symbols.txt" _deko_wraps)
+foreach(_symbol IN LISTS _deko_wraps)
+  target_link_options(melee PRIVATE "LINKER:--wrap=${_symbol}")
+endforeach()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/deko/wrap-symbols.txt")
 
 # Clang ignores switch.specs on this target. Supply the PIE linker script,
 # startup objects, and runtime libraries explicitly with devkitA64 ld.
@@ -147,11 +167,11 @@ add_custom_target(launcher_resources ALL
     "${MELEE_PC_ROOT}/resources" "$<TARGET_FILE_DIR:melee>/resources")
 add_dependencies(melee launcher_resources)
 
-# Package as NRO
+# Package as NRO. The launcher (launcher/) starts it from bin/melee.nro.
 nx_generate_nacp(melee.nacp
   NAME "Melee NX"
   AUTHOR "Kawaii"
-  VERSION "0.2.5")
+  VERSION "0.5.0")
 nx_create_nro(melee
   NACP melee.nacp
   ICON "${CMAKE_CURRENT_LIST_DIR}/icon.jpg"

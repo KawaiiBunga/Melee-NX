@@ -2,11 +2,18 @@
 include_guard(GLOBAL)
 
 get_filename_component(_repo "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+# Dawn's Null backend keeps the WebGPU objects; switch/deko draws them natively (docs/DEKO3D.md).
+# builder/build-melee.sh passes the matching Dawn and Aurora paths.
+set(_dawn_build_default "${_repo}/build/dawn-switch-deko")
+set(_aurora_default "${_repo}/build/aurora-deko")
 set(MELEE_DAWN_SOURCE "${_repo}/ref/dawn"            CACHE PATH "Patched Dawn source")
-set(MELEE_DAWN_BUILD  "${_repo}/build/dawn-switch"   CACHE PATH "Switch Dawn build")
+set(MELEE_DAWN_BUILD  "${_dawn_build_default}"       CACHE PATH "Switch Dawn build")
 set(MELEE_SDL_SOURCE  "${_repo}/ref/SDL"             CACHE PATH "Patched SDL3 source")
 set(MELEE_SDL_BUILD   "${_repo}/build/sdl-switch"    CACHE PATH "Switch SDL3 build")
-set(MELEE_AURORA_SOURCE "${_repo}/ref/melee-pc/extern/aurora" CACHE PATH "Aurora source (from melee-pc)")
+set(MELEE_AURORA_SOURCE "${_aurora_default}" CACHE PATH "Aurora source (from melee-pc)")
+if(NOT EXISTS "${MELEE_AURORA_SOURCE}/CMakeLists.txt")
+  message(FATAL_ERROR "Stage Aurora for deko3d first (builder/integrate-deko.py): ${MELEE_AURORA_SOURCE}")
+endif()
 
 foreach(_archive IN ITEMS
     "${MELEE_DAWN_BUILD}/src/dawn/native/libwebgpu_dawn.a"
@@ -69,6 +76,9 @@ target_include_directories(aurora_dvd PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../src"
 target_include_directories(aurora_gx PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../src")
 target_include_directories(aurora_core PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../src")
 
+# Native renderer: its library, the Aurora definition and the link list (MELEE_GFX_LINK_LIBS).
+include("${CMAKE_CURRENT_LIST_DIR}/Deko3D.cmake")
+
 # Strip libdl from Tracy — it doesn't exist on libnx.
 if(TARGET TracyClient)
   foreach(_link_property LINK_LIBRARIES INTERFACE_LINK_LIBRARIES)
@@ -124,23 +134,3 @@ if(TARGET sqlite3)
   target_sources(sqlite3 PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../src/sqlite_vfs.cpp")
   target_compile_features(sqlite3 PRIVATE cxx_std_17)
 endif()
-
-# Mesa Vulkan archives and the Rust/newlib ABI bridge.
-set(MESA_NVK_ROOT "" CACHE PATH
-  "Mesa/NVK Switch cross-build root (has builddir-switch/**/*.a and src/nouveau/vulkan/rust_switch_stubs.c) -- see docs/DEPS.md")
-if(MESA_NVK_ROOT STREQUAL "")
-  message(FATAL_ERROR "MESA_NVK_ROOT not set. See docs/DEPS.md for how to obtain a built Mesa/NVK Switch tree.")
-endif()
-set(_nvk_build "${MESA_NVK_ROOT}/builddir-switch")
-set(_nvk_stubs "${MESA_NVK_ROOT}/src/nouveau/vulkan/rust_switch_stubs.c")
-if(NOT EXISTS "${_nvk_stubs}")
-  message(FATAL_ERROR "Missing ${_nvk_stubs} -- MESA_NVK_ROOT does not look like a Mesa checkout with the Switch/NVK overlay applied.")
-endif()
-file(GLOB_RECURSE _nvk_archives CONFIGURE_DEPENDS "${_nvk_build}/*.a")
-list(FILTER _nvk_archives EXCLUDE REGEX "/libsanity_check_for_rust\\.a$")
-if(NOT _nvk_archives)
-  message(FATAL_ERROR "No .a archives found under ${_nvk_build} -- run switch/overlays/mesa-switch/build-switch.sh (see docs/DEPS.md) first.")
-endif()
-list(SORT _nvk_archives)
-list(JOIN _nvk_archives " " MELEE_NVK_ARCHIVES)
-set(MELEE_NVK_STUBS_SOURCE "${_nvk_stubs}")

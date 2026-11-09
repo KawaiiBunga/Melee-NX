@@ -39,6 +39,28 @@ new commit of already-patched files.
   `6d9f9d9fe8952aada5274154645610042d0a036e`. Selected changes were adapted to
   melee-pc's Aurora base; the donor is not a build dependency.
 
+- The native deko3d renderer (`switch/deko`, `switch/uam`, `builder/prepare-deko.py`,
+  `builder/deko-training.py`) is adapted from
+  [KartPadNX](https://github.com/KawaiiBunga/KartPadNX), itself from
+  [SwitchWaker](https://github.com/centollOS/SwitchWaker) `04372277d03f` (MIT; MPL-2.0 files keep their
+  notices, see `switch/deko/THIRD_PARTY.md`). It uses the pinned Dawn, configured
+  by `switch/cmake/DawnOptionsDeko.cmake`. deko3d and `uam.exe` come from the devkitPro image.
+
+- The launcher (`launcher/`) follows
+  [Melee Unlocked](https://github.com/Hero88go/melee-unlocked) (GPL-2.0-or-later, inspected at
+  `6d5e2e4bb78a89c01d74b86e0b20057f2d28f7ca`): its cosmetic catalog model, costume fighter table and
+  root rule (`launcher/source/data/dat_identity.cpp`), `user.json` account rules and Slippi
+  user-service endpoint. Its UI toolkit, screen stack, input reader, `fsutil.h` and
+  `zip_extract.cpp` started from the [KartPadNX](https://github.com/KawaiiBunga/KartPadNX)
+  launcher. Vendored: nlohmann/json 3.11.3 (MIT, `launcher/include/nlohmann`), Nunito (OFL 1.1)
+  and Material Icons Round (Apache 2.0) in `launcher/romfs/fonts` with their licences. The
+  launcher links devkitPro portlibs only (SDL2, SDL2_ttf, SDL2_image, libcurl, zlib).
+- `switch/slippi/slippi_protocol.*` ports Melee Unlocked's Slippi wire formats (same pin), and
+  `switch/slippi/third_party/enet` is Melee Unlocked's vendored ENet (MIT, `LICENSE` kept) without
+  its YouGame socket backend; `native_socket_only.c` and one `unix.h` include are melee-nx's.
+- `ref/melee-unlocked` is a reference checkout for the Slippi port, not a build dependency; see
+  [SLIPPI.md](SLIPPI.md).
+
 The [patch catalog](../switch/patches/README.md) records ownership and the SDL
 stack order. `python builder/verify-patches.py` reconstructs the patched
 Melee/Aurora and SDL files from their bases without resetting the live trees.
@@ -51,24 +73,9 @@ big-endian storage attributes; Clang builds the C++ graphics stack.
 
 The base tag and package repositories can change. Rebuilding the recipe later
 does not guarantee the same compiler or system libraries. Preserve a working
-image with `docker save`, and record its image ID when comparing builds. The
-SDK manifest records the toolchain ID used when it was packaged.
+image with `docker save`, and record its image ID when comparing builds.
 
-## Mesa
+The game no longer links a GPU driver. The Mesa/NVK Vulkan path and its SDK image were removed on
+November 9, 2026, when the deko3d build became the only one; `switch/uam` still carries the parts of
+Mesa (GLSL front end, nouveau codegen) that the deko3d shader compiler is built from.
 
-Mesa is supplied as a prebuilt Switch/NVK tree or inside an SDK image. The
-SDK contains the same archives, thin-archive members, and Rust compatibility
-source consumed by CMake, with a manifest and SHA-256 checksums. The host path
-and originating project's name are not part of the build interface.
-
-The working tree originally came from KartPad-NX's `ref/mesa-switch-main`.
-Its local overlay snapshot identifies `danfromtico/mesa-switch` and version
-`26.2.1`, but records no upstream commit and explicitly describes itself as a
-partial recovery snapshot. It is not a verified recipe for rebuilding the
-entire driver from a fresh clone.
-
-Packaging that existing build removes the dependency on the original checkout
-for subsequent builds. It does not reconstruct the driver's source provenance
-or rebuild the Rust NAK compiler. Those require a separate dependency migration
-and validation effort. See [the Docker guide](../switch/docker/README.md) for
-creating, checking, and transferring an SDK.

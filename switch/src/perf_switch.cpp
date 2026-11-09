@@ -4,11 +4,31 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 
 extern "C" void pc_log_line(const char* fmt, ...);
 
 namespace {
-enum class Affinity { Baseline, Main, Split };
+// Every `key value` line of perf.cfg with a numeric value (decimal or 0x hex), for melee_nx_perf_int
+// and melee_nx_opt. The named keys parsed in melee_nx_perf_init keep their own handling.
+struct CfgEntry {
+    char key[32];
+    long value;
+};
+constexpr int MaxCfgEntries = 64;
+std::array<CfgEntry, MaxCfgEntries> cfg_entries{};
+int cfg_count = 0;
+const CfgEntry* cfg_find(const char* key) {
+    for (int i = 0; i < cfg_count; ++i)
+        if (std::strcmp(cfg_entries[i].key, key) == 0)
+            return &cfg_entries[i];
+    return nullptr;
+}
+std::mutex opt_log_mutex;
+std::array<char[32], MaxCfgEntries> opt_logged{};
+int opt_logged_count = 0;
+
+enum class Affinity { Baseline, Main, Split, Tuned };
 Affinity affinity = Affinity::Baseline;
 const char* affinity_name = "baseline";
 int compile_workers = 1;
@@ -47,6 +67,14 @@ extern "C" void melee_nx_perf_init(void) {
             char key[32], value[32], extra[2];
             if (std::sscanf(line, " %31s %31s %1s", key, value, extra) != 2)
                 continue;
+            if (key[0] != '#' && cfg_count < MaxCfgEntries && !cfg_find(key)) {
+                char* end = nullptr;
+                const long number = std::strtol(value, &end, 0);
+                if (end != value && *end == '\0') {
+                    std::memcpy(cfg_entries[cfg_count].key, key, sizeof(key));
+                    cfg_entries[cfg_count++].value = number;
+                }
+            }
             if (std::strcmp(key, "affinity") == 0) {
                 if (std::strcmp(value, "main") == 0) {
                     affinity = Affinity::Main;
@@ -54,6 +82,9 @@ extern "C" void melee_nx_perf_init(void) {
                 } else if (std::strcmp(value, "split") == 0) {
                     affinity = Affinity::Split;
                     affinity_name = "split";
+                } else if (std::strcmp(value, "tuned") == 0) {
+                    affinity = Affinity::Tuned;
+                    affinity_name = "tuned";
                 } else if (std::strcmp(value, "baseline") == 0) {
                     affinity = Affinity::Baseline;
                     affinity_name = "baseline";
@@ -106,6 +137,35 @@ extern "C" void melee_nx_perf_init(void) {
         affinity_name, compile_workers, monolithic_cache, launch_warm, gx_skip_unready);
 }
 
+extern "C" int melee_nx_perf_int(const char* key, int fallback) {
+    const CfgEntry* entry = cfg_find(key);
+    return entry ? static_cast<int>(entry->value) : fallback;
+}
+
+// An optimization switch: `opt_safe 1` in perf.cfg turns every opt off except those the file sets
+// explicitly. Each key is logged once, with where its value came from, so a capture says what ran.
+extern "C" int melee_nx_opt(const char* key, int fallback) {
+    const CfgEntry* entry = cfg_find(key);
+    const char* source = "default";
+    int value = fallback;
+    if (entry) {
+        value = static_cast<int>(entry->value);
+        source = "perf.cfg";
+    } else if (melee_nx_perf_int("opt_safe", 0) != 0) {
+        value = 0;
+        source = "opt_safe";
+    }
+    std::lock_guard lock(opt_log_mutex);
+    for (int i = 0; i < opt_logged_count; ++i)
+        if (std::strcmp(opt_logged[i], key) == 0)
+            return value;
+    if (opt_logged_count < MaxCfgEntries) {
+        std::snprintf(opt_logged[opt_logged_count++], sizeof(opt_logged[0]), "%s", key);
+        pc_log_line("[opt] %s=%d (%s)", key, value, source);
+    }
+    return value;
+}
+
 extern "C" void melee_nx_perf_thread(const char* name) {
     int role;
     if (std::strcmp(name, "Main thread") == 0)
@@ -126,22 +186,36 @@ extern "C" void melee_nx_perf_thread(const char* name) {
         if (allowed & (1ull << i))
             cores[count++] = i;
     int target = -1;
+    u64 shared_mask = 0; // tuned: a set of cores instead of one
     if (R_SUCCEEDED(info_rc) && count >= 3) {
-        if (affinity != Affinity::Baseline && role == 0)
+        if (affinity != Affinity::Baseline && affinity != Affinity::Tuned && role == 0)
             target = cores[0];
         if (affinity == Affinity::Split && role == 1)
             target = cores[1];
         if (affinity == Affinity::Split && role == 2)
             target = cores[count - 1];
+        // KartPadNX's tuned placement: the game thread owns the middle core alone, and everything
+        // else shares the remaining ones (the lowest for the FIFO thread, the highest for rendering).
+        if (affinity == Affinity::Tuned) {
+            if (role == 0) {
+                target = cores[1];
+            } else {
+                shared_mask = allowed & ~(1ull << cores[1]);
+                target = role == 1 ? cores[0] : cores[count - 1];
+            }
+        }
     }
-    const Result set_rc =
-        target < 0 ? 0 : svcSetThreadCoreMask(CUR_THREAD_HANDLE, target, 1u << target);
+    const Result set_rc = target < 0 ? 0
+                          : shared_mask != 0
+                              ? svcSetThreadCoreMask(CUR_THREAD_HANDLE, target, shared_mask)
+                              : svcSetThreadCoreMask(CUR_THREAD_HANDLE, target, 1u << target);
     const Result mask_rc = svcGetThreadCoreMask(&preferred, &actual, CUR_THREAD_HANDLE);
     const Result priority_rc = svcGetThreadPriority(&priority, CUR_THREAD_HANDLE);
     pc_log_line(
         "THREAD %s policy %s allowed 0x%llx requested %d actual 0x%llx preferred %d priority %d rc %x/%x/%x/%x",
         name, affinity_name, (unsigned long long)allowed, target, (unsigned long long)actual,
         preferred, priority, info_rc, set_rc, mask_rc, priority_rc);
+    melee_nx_prof_register(role);
 }
 
 extern "C" uint64_t melee_nx_perf_now(void) { return armTicksToNs(armGetSystemTick()); }

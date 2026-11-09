@@ -12,7 +12,7 @@ in [the dependency guide](../../docs/DEPS.md); the maintenance workflow is in
 |---|---|
 | [dawn-switch-libnx.patch](dawn-switch-libnx.patch) | libnx platform shim, NWindow surface type |
 | [dawn-abseil-switch.patch](dawn-abseil-switch.patch) | POSIX guards for newlib |
-| [dawn-switch-surface.patch](dawn-switch-surface.patch) | Adds `SurfaceSourceSwitchNativeWindow` + `VK_NN_vi_surface` Vulkan surface creation |
+| [dawn-switch-surface.patch](dawn-switch-surface.patch) | Adds `SurfaceSourceSwitchNativeWindow` (and Vulkan surface code left from the removed NVK path) |
 | [dawn-switch-renderdoc.patch](dawn-switch-renderdoc.patch) | Allow the Switch platform in the vendored RenderDoc header |
 
 ## SDL
@@ -32,7 +32,7 @@ Dusklight patches target `ref/SDL-dusklight`; the legacy patch targets `ref/SDL`
 | Patch | Purpose |
 |---|---|
 | [aurora-switch-surface.patch](aurora-switch-surface.patch) | Constructs `SurfaceSourceSwitchNativeWindow` from `nwindowGetDefault()` in `BackendBinding.cpp` |
-| [aurora-switch-dawn-backends.patch](aurora-switch-dawn-backends.patch) | Vulkan-only backend selection and Fifo presentation |
+| [aurora-switch-dawn-backends.patch](aurora-switch-dawn-backends.patch) | Backend selection and Fifo presentation (written for the removed Vulkan path; the deko3d staging edits these files) |
 | [aurora-switch-platform-compat.patch](aurora-switch-platform-compat.patch) | Preserves the recovered snapshot's AArch64 math and THP compatibility changes |
 | [aurora-switch-no-backtrace.patch](aurora-switch-no-backtrace.patch) | Disables unsupported host backtrace integration on Switch |
 | [aurora-switch-no-mmap.patch](aurora-switch-no-mmap.patch) | Horizon file access and the extracted-data DVD backend |
@@ -49,13 +49,21 @@ Dusklight patches target `ref/SDL-dusklight`; the legacy patch targets `ref/SDL`
 | [aurora-switch-thread-sweep.patch](aurora-switch-thread-sweep.patch) | Connects named thread setup to the optional Switch affinity sweep |
 | [aurora-switch-uber-shader.patch](aurora-switch-uber-shader.patch) | Uber-shader support: shared WGSL helpers, uber pipeline identity, uniform packing and support check, launch-warm stand-ins (draw hooks live in the GX CPU, cache-recovery and encoder patches) |
 
+### Deko3D staging (not a patch)
+
+The deko3d renderer needs edits to files that the patches above already own (`gpu.cpp`, `aurora.cpp`,
+`pipeline_cache.cpp`, `gpu_cache.cpp`). Rather than fold them into those patches, `builder/integrate-deko.py`
+copies the patched Aurora to `build/aurora-deko` and edits the copy behind `AURORA_GFX_DEKO3D`. The
+reference tree, the ownership rule and `verify-patches.py` are untouched. Dawn's Tint GLSL writer gets
+two options from `builder/prepare-deko.py` (idempotent, applied by `build-graphics.sh`).
+
 ## Melee
 
 `ref/melee-pc`.
 
 | Patch | Purpose |
 |---|---|
-| [melee-switch-gcc-compat.patch](melee-switch-gcc-compat.patch) | Platform and launcher compatibility, file cache, audio, and extracted-data boot wiring |
+| [melee-switch-gcc-compat.patch](melee-switch-gcc-compat.patch) | Platform and launcher compatibility, file cache, audio, and extracted-data boot wiring; the launcher's mod overlay (`MELEE_MODS_MANIFEST` in `file_cache.cpp`, see [docs/LAUNCHER.md](../../docs/LAUNCHER.md#how-the-game-applies-mods)) |
 | [melee-switch-disc-ptr-window.patch](melee-switch-disc-ptr-window.patch) | Adds MEM1-window pointer encoding/resolution and converts raw disc-slot casts to `DP()` |
 | [melee-switch-input-worker.patch](melee-switch-input-worker.patch) | Avoids creating an unused auxiliary SDL input worker on Switch; `PADRead` remains on the main thread |
 | [melee-switch-perf-telemetry.patch](melee-switch-perf-telemetry.patch) | Entry-point rename, shared logging, OS compatibility, and frame telemetry |

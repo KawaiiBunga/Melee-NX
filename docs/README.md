@@ -7,8 +7,12 @@
 | [Contributing](../CONTRIBUTING.md) | Source layout, patch workflow, validation, style |
 | [Architecture](ARCHITECTURE.md) | Platform constraints and integration boundaries |
 | [Dependencies](DEPS.md) | Source pins, provenance, reproducibility limits |
+| [Native deko3d renderer](DEKO3D.md) | The renderer: design, build, shader seeds, risks |
+| [perf.cfg keys](PERF-CFG-KEYS.md) | Every runtime switch the code reads (generated) |
+| [Launcher](LAUNCHER.md) | The Melee NX launcher: install, mods, Slippi sign-in, game handoff, build and tests |
+| [Slippi](SLIPPI.md) | Slippi status: what is done, the online-play port plan and validation order |
 | [Patch catalog](../switch/patches/README.md) | Patch ownership and application order |
-| [Docker images](../switch/docker/README.md) | Reusable toolchain and Mesa SDK packaging |
+| [Docker image](../switch/docker/README.md) | Reusable toolchain image |
 | [Cleanup record](CLEANUP.md) | Scope and validation of the repository cleanup |
 
 These guides are maintained with the code. Local `HANDOFF-*`, `PLAN-*`, and

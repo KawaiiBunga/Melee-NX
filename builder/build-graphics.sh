@@ -10,9 +10,11 @@ case "$stage" in prepare|dawn|sdl|aurora|all) ;;
   *) echo "usage: $0 [prepare|dawn|sdl|aurora|all]" >&2; exit 64;; esac
 [[ "$jobs" =~ ^[1-9][0-9]*$ ]] || { echo "MELEE_BUILD_JOBS must be positive" >&2; exit 64; }
 
+# Dawn's Null backend plus Tint's GLSL writer, for the native deko3d renderer in switch/deko
+# (docs/DEKO3D.md).
 dawn="$repo/ref/dawn"
 aurora="$repo/ref/melee-pc/extern/aurora"
-dawn_build="$repo/build/dawn-switch"
+dawn_build="$repo/build/dawn-switch-deko"
 
 # Keep separate SDL source/build pairs to avoid mixing libraries and headers.
 sdl_variant="${MELEE_SDL_VARIANT:-dusklight}"
@@ -71,6 +73,8 @@ prepare() {
   apply_patch_once "$dawn/third_party/abseil-cpp" "$repo/switch/patches/dawn-abseil-switch.patch"
   apply_patch_once "$dawn"                        "$repo/switch/patches/dawn-switch-surface.patch"
   apply_patch_once "$dawn"                        "$repo/switch/patches/dawn-switch-renderdoc.patch"
+  # Idempotent edits of Tint's GLSL writer.
+  python3 "$repo/builder/prepare-deko.py" --dawn "$dawn"
   if [[ "$sdl_variant" == dusklight ]]; then
     apply_sdl_stack "$sdl" "$repo/switch/patches/sdl-dusklight-switch.patch" \
                            "$repo/switch/patches/sdl-dusklight-melee-nx.patch"
@@ -98,10 +102,14 @@ prepare() {
 }
 
 build_dawn() {
+  # The glsl writer, wgsl reader and inspector are not dependencies of webgpu_dawn; the renderer's
+  # shader translator (switch/deko/shader_translate.cpp) links them.
+  python3 "$repo/builder/prepare-deko.py" --dawn "$dawn"
   cmake -S "$dawn" -B "$dawn_build" -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE="$repo/switch/cmake/SwitchGCC.cmake" \
-    -C "$repo/switch/cmake/DawnOptions.cmake"
-  cmake --build "$dawn_build" --target webgpu_dawn --parallel "$jobs"
+    -C "$repo/switch/cmake/DawnOptionsDeko.cmake"
+  cmake --build "$dawn_build" --target webgpu_dawn tint_lang_glsl_writer \
+    tint_lang_wgsl_reader tint_lang_wgsl_inspector --parallel "$jobs"
 }
 
 build_sdl() {

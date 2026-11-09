@@ -313,7 +313,7 @@ index a9c3fbd..e8575bb 100644
  }
  #endif
 diff --git a/src/pc/file_cache.cpp b/src/pc/file_cache.cpp
-index e4d79ec..4ad79a4 100644
+index e4d79ec..55b6f7f 100644
 --- a/src/pc/file_cache.cpp
 +++ b/src/pc/file_cache.cpp
 @@ -25,6 +25,8 @@
@@ -339,7 +339,57 @@ index e4d79ec..4ad79a4 100644
              return PROFILE_HANDHELD;
          return PROFILE_DESKTOP;
      }
-@@ -188,6 +195,7 @@ bool preload_single_file(const char* name, int entryNum) {
+@@ -149,9 +156,49 @@ void evict_lru_locked(size_t required_bytes) {
+     }
+ }
+ 
++// melee-nx launcher mods: MELEE_MODS_MANIFEST names a file of "disc path<TAB>SD path" lines
++// (launcher/source/data/mods.cpp). Listed files are served from the mod instead of the game data.
++// Read once; keys are lower-case because disc paths are case-insensitive.
++const std::unordered_map<std::string, std::string>& mod_overlay() {
++    static const std::unordered_map<std::string, std::string> overlay = [] {
++        std::unordered_map<std::string, std::string> map;
++        const char* manifest = getenv("MELEE_MODS_MANIFEST");
++        if (manifest == nullptr || manifest[0] == '\0')
++            return map;
++        std::ifstream in(manifest);
++        std::string line;
++        while (std::getline(in, line)) {
++            if (!line.empty() && line.back() == '\r')
++                line.pop_back();
++            const size_t tab = line.find('\t');
++            if (line.empty() || line[0] == '#' || tab == std::string::npos || tab == 0 ||
++                tab + 1 >= line.size())
++                continue;
++            std::string key = line.substr(0, tab);
++            for (char& c : key)
++                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
++            map.emplace(std::move(key), line.substr(tab + 1));
++        }
++        OSReport("[FileCache] mod overlay: %zu files from %s\n", map.size(), manifest);
++        return map;
++    }();
++    return overlay;
++}
++
+ std::string resolve_loose_path(const char* filename) {
+     if (filename == nullptr)
+         return "";
++    const auto& overlay = mod_overlay();
++    if (!overlay.empty()) {
++        std::string key = filename;
++        while (!key.empty() && key[0] == '/')
++            key.erase(key.begin());
++        for (char& c : key)
++            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
++        auto it = overlay.find(key);
++        if (it != overlay.end())
++            return it->second;
++    }
+     std::string dir = s_looseDir;
+     if (dir.empty()) {
+         const char* env = getenv("MELEE_FILES_DIR");
+@@ -188,6 +235,7 @@ bool preload_single_file(const char* name, int entryNum) {
      // 1. Check if loose file exists
      std::string loose_path = resolve_loose_path(key.c_str());
      if (!loose_path.empty()) {
@@ -347,7 +397,7 @@ index e4d79ec..4ad79a4 100644
          struct stat st;
          if (stat(loose_path.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
              std::ifstream in(loose_path, std::ios::binary);
-@@ -312,6 +320,7 @@ bool pc_file_cache_get(const char* filename, void* dst, size_t* size) {
+@@ -312,6 +360,7 @@ bool pc_file_cache_get(const char* filename, void* dst, size_t* size) {
      // Check loose file directory override
      std::string loose_path = resolve_loose_path(key.c_str());
      if (!loose_path.empty()) {
@@ -355,7 +405,7 @@ index e4d79ec..4ad79a4 100644
          struct stat st;
          if (stat(loose_path.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
              std::ifstream in(loose_path, std::ios::binary);
-@@ -353,6 +362,7 @@ bool pc_file_cache_get_size(const char* filename, size_t* size) {
+@@ -353,6 +402,7 @@ bool pc_file_cache_get_size(const char* filename, size_t* size) {
  
      std::string loose_path = resolve_loose_path(key.c_str());
      if (!loose_path.empty()) {

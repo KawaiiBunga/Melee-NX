@@ -1,8 +1,8 @@
 diff --git a/lib/dolphin/dvd/dvd.cpp b/lib/dolphin/dvd/dvd.cpp
-index 839f6d5..4f456b7 100644
+index 839f6d5..904363f 100644
 --- a/lib/dolphin/dvd/dvd.cpp
 +++ b/lib/dolphin/dvd/dvd.cpp
-@@ -11,7 +11,7 @@
+@@ -11,19 +11,27 @@
  #define WIN32_LEAN_AND_MEAN
  #define NOMINMAX
  #include <windows.h>
@@ -11,7 +11,18 @@ index 839f6d5..4f456b7 100644
  #include <fcntl.h>
  #include <sys/mman.h>
  #include <sys/stat.h>
-@@ -24,6 +24,8 @@
+ #include <unistd.h>
+ #endif
+ 
++#include <cctype>
++#include <cstdio>
++#include <cstdlib>
++#include <fstream>
++#include <unordered_map>
++#include <unordered_set>
+ #include <atomic>
+ #include <condition_variable>
+ #include <cstddef>
  #include <cstdint>
  #include <cstring>
  #include <deque>
@@ -20,7 +31,7 @@ index 839f6d5..4f456b7 100644
  #include <limits>
  #include <memory>
  #include <mutex>
-@@ -35,6 +37,7 @@
+@@ -35,6 +43,7 @@
  #include "dvd.hpp"
  
  #include "../../internal.hpp"
@@ -28,7 +39,7 @@ index 839f6d5..4f456b7 100644
  
  using namespace aurora::dvd::impl;
  
-@@ -101,6 +104,59 @@ public:
+@@ -101,6 +110,59 @@ public:
    }
  };
  
@@ -88,7 +99,7 @@ index 839f6d5..4f456b7 100644
  CommandDataNod* s_disc;
  
  void clearState() {
-@@ -118,6 +174,8 @@ void clearState() {
+@@ -118,6 +180,8 @@ void clearState() {
    s_currentDir = 0;
    s_currentPath = "/";
    s_diskID = {};
@@ -97,7 +108,7 @@ index 839f6d5..4f456b7 100644
    s_initialized = false;
  }
  
-@@ -178,7 +236,7 @@ void mmapStreamClose(void* userData) {
+@@ -178,7 +242,7 @@ void mmapStreamClose(void* userData) {
    if (stream->fileHandle != INVALID_HANDLE_VALUE) {
      CloseHandle(stream->fileHandle);
    }
@@ -106,7 +117,7 @@ index 839f6d5..4f456b7 100644
    if (stream->data != nullptr && stream->data != MAP_FAILED) {
      munmap(const_cast<uint8_t*>(stream->data), static_cast<size_t>(stream->size));
    }
-@@ -196,6 +254,7 @@ int64_t sdlStreamReadAt(void* userData, uint64_t offset, void* out, size_t len)
+@@ -196,6 +260,7 @@ int64_t sdlStreamReadAt(void* userData, uint64_t offset, void* out, size_t len)
      return -1;
    }
  
@@ -114,7 +125,7 @@ index 839f6d5..4f456b7 100644
    if (SDL_SeekIO(io, static_cast<Sint64>(offset), SDL_IO_SEEK_SET) < 0) {
      return -1;
    }
-@@ -218,6 +277,7 @@ int64_t sdlStreamLen(void* userData) {
+@@ -218,6 +283,7 @@ int64_t sdlStreamLen(void* userData) {
      return -1;
    }
  
@@ -122,7 +133,63 @@ index 839f6d5..4f456b7 100644
    const Sint64 size = SDL_GetIOSize(io);
    return size < 0 ? -1 : static_cast<int64_t>(size);
  }
-@@ -453,6 +513,28 @@ public:
+@@ -286,6 +352,55 @@ std::string build_path(FstIndex fstIndex) {
+   return out;
+ }
+ 
++// melee-nx launcher mods: MELEE_MODS_MANIFEST names a file of "disc path<TAB>SD path" lines
++// (launcher/source/data/mods.cpp). Every loader opens files through DVDFastOpen, including the
++// fighter preloader (lbdvd.c), so a listed file is served from the mod with the mod's own length.
++// melee-pc's file_cache.cpp applies the same list to lbFile's extracted-files path.
++const std::unordered_map<std::string, std::string>& modOverlay() {
++  static const std::unordered_map<std::string, std::string> overlay = [] {
++    std::unordered_map<std::string, std::string> map;
++    const char* manifest = std::getenv("MELEE_MODS_MANIFEST");
++    if (manifest == nullptr || manifest[0] == '\0') {
++      return map;
++    }
++    std::ifstream in(manifest);
++    std::string line;
++    while (std::getline(in, line)) {
++      if (!line.empty() && line.back() == '\r') {
++        line.pop_back();
++      }
++      const size_t tab = line.find('\t');
++      if (line.empty() || line[0] == '#' || tab == std::string::npos || tab == 0 || tab + 1 >= line.size()) {
++        continue;
++      }
++      std::string key = line.substr(0, tab);
++      for (char& c : key) {
++        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
++      }
++      map.emplace(std::move(key), line.substr(tab + 1));
++    }
++    std::printf("[dvd] mod overlay: %zu files from %s\n", map.size(), manifest);
++    return map;
++  }();
++  return overlay;
++}
++
++std::string modPathFor(FstIndex fstIndex) {
++  const auto& overlay = modOverlay();
++  if (overlay.empty()) {
++    return {};
++  }
++  std::string key = build_path(fstIndex);
++  while (!key.empty() && key[0] == '/') {
++    key.erase(key.begin());
++  }
++  for (char& c : key) {
++    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
++  }
++  const auto it = overlay.find(key);
++  return it == overlay.end() ? std::string() : it->second;
++}
++
+ s32 readFromHandle(CommandDataBase* handle, void* out, s32 length, s32 offset, u32* transferredOut) {
+   if (transferredOut != nullptr) {
+     *transferredOut = 0;
+@@ -453,6 +568,28 @@ public:
      m_doneCv.notify_all();
    }
  
@@ -151,7 +218,7 @@ index 839f6d5..4f456b7 100644
    void enqueue(DVDCommandBlock* block) {
      bool executeNow = false;
      {
-@@ -564,10 +646,18 @@ private:
+@@ -564,10 +701,18 @@ private:
  
      std::unique_lock lk{m_mutex};
      while (true) {
@@ -171,7 +238,7 @@ index 839f6d5..4f456b7 100644
        DVDCommandBlock* block = m_queue.front();
        m_queue.pop_front();
        m_activeBlock = block;
-@@ -667,6 +757,7 @@ private:
+@@ -667,6 +812,7 @@ private:
    std::mutex m_mutex;
    std::condition_variable m_cv;
    std::condition_variable m_doneCv;
@@ -179,7 +246,7 @@ index 839f6d5..4f456b7 100644
    std::deque<DVDCommandBlock*> m_queue;
    DVDCommandBlock* m_activeBlock = nullptr;
    DVDCommandBlock* m_cancelActiveBlock = nullptr;
-@@ -711,16 +802,7 @@ void cbForPrepareStreamAsync(s32 result, DVDCommandBlock* block) {
+@@ -711,16 +857,7 @@ void cbForPrepareStreamAsync(s32 result, DVDCommandBlock* block) {
  
  } // namespace
  
@@ -197,7 +264,7 @@ index 839f6d5..4f456b7 100644
    NodDiscStream stream{};
    bool streamReady = false;
  
-@@ -789,7 +871,11 @@ bool aurora_dvd_open(const char* disc_path) {
+@@ -789,7 +926,11 @@ bool aurora_dvd_open(const char* disc_path) {
  #endif
  
    if (!streamReady) {
@@ -210,7 +277,7 @@ index 839f6d5..4f456b7 100644
      if (io == nullptr) {
        return false;
      }
-@@ -844,8 +930,37 @@ bool aurora_dvd_open(const char* disc_path) {
+@@ -844,8 +985,37 @@ bool aurora_dvd_open(const char* disc_path) {
    s_currentDir = 0;
    s_currentPath = "/";
    s_initialized = true;
@@ -248,7 +315,7 @@ index 839f6d5..4f456b7 100644
  }
  
  void aurora_dvd_close(void) {
-@@ -853,6 +968,130 @@ void aurora_dvd_close(void) {
+@@ -853,6 +1023,130 @@ void aurora_dvd_close(void) {
    clearState();
  }
  
@@ -379,7 +446,7 @@ index 839f6d5..4f456b7 100644
  void DVDInit(void) {}
  
  const u8* DVDGetDOLLocation(s32* out_size) {
-@@ -1204,7 +1443,8 @@ BOOL DVDConvertEntrynumToPath(s32 entrynum, char* path, u32 maxlen) {
+@@ -1204,7 +1498,8 @@ BOOL DVDConvertEntrynumToPath(s32 entrynum, char* path, u32 maxlen) {
  BOOL DVDFastOpen(s32 entrynum, DVDFileInfo* fileInfo) {
    std::lock_guard lock(s_fstLock);
  
@@ -389,7 +456,38 @@ index 839f6d5..4f456b7 100644
      return FALSE;
    }
  
-@@ -1227,6 +1467,17 @@ BOOL DVDFastOpen(s32 entrynum, DVDFileInfo* fileInfo) {
+@@ -1220,6 +1515,30 @@ BOOL DVDFastOpen(s32 entrynum, DVDFileInfo* fileInfo) {
+   fileInfo->startAddr = 0;
+   fileInfo->length = entry.nextOrLength;
+ 
++  if (const std::string mod = entry.isOverlay ? std::string() : modPathFor(fstIndex); !mod.empty()) {
++    SDL_IOStream* io = nullptr;
++    {
++      SWITCH_IO_LOCK();
++      io = SDL_IOFromFile(mod.c_str(), "rb");
++    }
++    const Sint64 size = io != nullptr ? SDL_GetIOSize(io) : -1;
++    static std::unordered_set<std::string> s_reported;  // guarded by s_fstLock
++    if (s_reported.insert(mod).second) {
++      std::printf("[dvd] mod file %s: %s (%lld bytes)\n", build_path(fstIndex).c_str(), mod.c_str(),
++                  static_cast<long long>(size));
++    }
++    if (size > 0 && size <= std::numeric_limits<s32>::max()) {
++      fileInfo->length = static_cast<u32>(size);
++      fileInfo->cb.userData = new CommandDataLoose(io);
++      atomic_store_release(fileInfo->cb.state, DVD_STATE_END);
++      return TRUE;
++    }
++    if (io != nullptr) {
++      SDL_CloseIO(io);
++    }
++    // A missing or empty mod file falls back to the game's own file.
++  }
++
+   if (entry.isOverlay) {
+     const auto handle = s_overlayCallbacks.open(entry.overlayData);
+     if (!handle) {
+@@ -1227,6 +1546,17 @@ BOOL DVDFastOpen(s32 entrynum, DVDFileInfo* fileInfo) {
      }
  
      fileInfo->cb.userData = new CommandDataOverlay(handle);
